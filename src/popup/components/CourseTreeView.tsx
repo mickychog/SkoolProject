@@ -150,10 +150,20 @@ export default function CourseTreeView({ course, onEnqueueTasks }: Props) {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-      {/* Filter and Selection Controls */}
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        maxHeight: '450px',
+        gap: '8px',
+        boxSizing: 'border-box',
+      }}
+    >
+      {/* 1. Header / Filter Controls (Fixed) */}
       <div
         style={{
+          flexShrink: 0,
           display: 'flex',
           flexDirection: 'column',
           gap: '8px',
@@ -235,8 +245,18 @@ export default function CourseTreeView({ course, onEnqueueTasks }: Props) {
         </div>
       </div>
 
-      {/* Modules Tree */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '280px', overflowY: 'auto' }}>
+      {/* 2. Scrollable Modules Tree (Flexible & non-overflowing) */}
+      <div
+        style={{
+          flex: 1,
+          minHeight: '120px',
+          overflowY: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '6px',
+          paddingRight: '2px',
+        }}
+      >
         {course.modules.map((mod) => {
           const isCollapsed = collapsedModules[mod.moduleId];
 
@@ -248,6 +268,7 @@ export default function CourseTreeView({ course, onEnqueueTasks }: Props) {
                 border: '1px solid #1e293b',
                 borderRadius: '8px',
                 overflow: 'hidden',
+                flexShrink: 0,
               }}
             >
               <div
@@ -261,13 +282,23 @@ export default function CourseTreeView({ course, onEnqueueTasks }: Props) {
                   cursor: 'pointer',
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
                   {isCollapsed ? <ChevronRight size={14} color="#94a3b8" /> : <ChevronDown size={14} color="#94a3b8" />}
-                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#f1f5f9' }}>
+                  <span
+                    style={{
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      color: '#f1f5f9',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      maxWidth: '220px',
+                    }}
+                  >
                     {mod.moduleTitle}
                   </span>
                 </div>
-                <span style={{ fontSize: '11px', color: '#64748b' }}>
+                <span style={{ fontSize: '11px', color: '#64748b', whiteSpace: 'nowrap' }}>
                   {mod.lessons.length} lecciones
                 </span>
               </div>
@@ -305,14 +336,14 @@ export default function CourseTreeView({ course, onEnqueueTasks }: Props) {
                               overflow: 'hidden',
                               textOverflow: 'ellipsis',
                               whiteSpace: 'nowrap',
-                              maxWidth: '200px',
+                              maxWidth: '190px',
                             }}
                           >
                             {lesson.lessonTitle}
                           </span>
                         </div>
 
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
                           {lesson.media && <Video size={12} color="#60a5fa" />}
                           {lesson.attachments.length > 0 && (
                             <span style={{ display: 'flex', alignItems: 'center', gap: '2px', fontSize: '10px', color: '#34d399' }}>
@@ -331,29 +362,32 @@ export default function CourseTreeView({ course, onEnqueueTasks }: Props) {
         })}
       </div>
 
-      {/* Action Enqueue Button */}
-      <button
-        onClick={handleDownloadSelected}
-        disabled={selectedLessonIds.size === 0}
-        style={{
-          padding: '12px',
-          borderRadius: '8px',
-          backgroundColor: selectedLessonIds.size > 0 ? '#10b981' : '#334155',
-          border: 'none',
-          color: '#fff',
-          fontWeight: 600,
-          fontSize: '13px',
-          cursor: selectedLessonIds.size > 0 ? 'pointer' : 'not-allowed',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '8px',
-          boxShadow: selectedLessonIds.size > 0 ? '0 4px 12px rgba(16, 185, 129, 0.3)' : 'none',
-        }}
-      >
-        <DownloadCloud size={16} />
-        Encolar {selectedLessonIds.size} Lecciones Seleccionadas
-      </button>
+      {/* 3. Action Enqueue Button (Pinned at Bottom) */}
+      <div style={{ flexShrink: 0, paddingTop: '4px' }}>
+        <button
+          onClick={handleDownloadSelected}
+          disabled={selectedLessonIds.size === 0}
+          style={{
+            width: '100%',
+            padding: '10px',
+            borderRadius: '8px',
+            backgroundColor: selectedLessonIds.size > 0 ? '#10b981' : '#334155',
+            border: 'none',
+            color: '#fff',
+            fontWeight: 600,
+            fontSize: '13px',
+            cursor: selectedLessonIds.size > 0 ? 'pointer' : 'not-allowed',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+            boxShadow: selectedLessonIds.size > 0 ? '0 4px 12px rgba(16, 185, 129, 0.3)' : 'none',
+          }}
+        >
+          <DownloadCloud size={16} />
+          Encolar {selectedLessonIds.size} Lecciones Seleccionadas
+        </button>
+      </div>
     </div>
   );
 }

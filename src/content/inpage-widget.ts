@@ -11,7 +11,7 @@ export class InPageWidget {
 
   static mount(): void {
     if (document.getElementById(this.WIDGET_ID)) return;
-    if (!window.location.href.includes('/classroom/')) return;
+    if (!window.location.hostname.includes('skool.com')) return;
 
     const container = document.createElement('div');
     container.id = this.WIDGET_ID;
@@ -61,10 +61,13 @@ export class InPageWidget {
         }
 
         const tasks: any[] = [];
-        if (lesson.media) {
+        const communityName = 'Skool';
+        const courseTitle = document.title.replace('· Skool', '').trim() || 'Curso';
+
+        if (lesson.media?.sourceUrl) {
           const path = buildDownloadPath({
-            communityName: 'Skool',
-            courseTitle: document.title.replace('· Skool', '').trim(),
+            communityName,
+            courseTitle,
             moduleIndex: 1,
             moduleTitle: 'Module 01',
             lessonIndex: lesson.lessonIndex,
@@ -74,7 +77,7 @@ export class InPageWidget {
           const parts = path.split('/');
           const fileName = parts.pop()!;
           tasks.push({
-            courseTitle: document.title.replace('· Skool', '').trim(),
+            courseTitle,
             moduleTitle: 'Module 01',
             moduleIndex: 1,
             lessonTitle: lesson.lessonTitle,
@@ -89,8 +92,8 @@ export class InPageWidget {
 
         lesson.attachments.forEach((att) => {
           const path = buildDownloadPath({
-            communityName: 'Skool',
-            courseTitle: document.title.replace('· Skool', '').trim(),
+            communityName,
+            courseTitle,
             moduleIndex: 1,
             moduleTitle: 'Module 01',
             lessonIndex: lesson.lessonIndex,
@@ -101,7 +104,7 @@ export class InPageWidget {
           const parts = path.split('/');
           const fileName = parts.pop()!;
           tasks.push({
-            courseTitle: document.title.replace('· Skool', '').trim(),
+            courseTitle,
             moduleTitle: 'Module 01',
             moduleIndex: 1,
             lessonTitle: lesson.lessonTitle,
@@ -114,15 +117,22 @@ export class InPageWidget {
           });
         });
 
-        chrome.runtime.sendMessage({
+        if (tasks.length === 0) {
+          container.innerHTML = `<span>⚠️ Sin video ni adjuntos</span>`;
+          setTimeout(() => InPageWidget.resetButton(container), 2500);
+          return;
+        }
+
+        await chrome.runtime.sendMessage({
           type: 'QUEUE_ADD_TASKS',
           payload: { tasks },
         });
 
-        container.innerHTML = `<span style="color:#34d399;">✓ ¡${tasks.length} elementos encolados!</span>`;
+        container.innerHTML = `<span style="color:#34d399;">✓ ¡${tasks.length} en cola!</span>`;
         setTimeout(() => InPageWidget.resetButton(container), 3000);
       } catch (err) {
-        container.innerHTML = `<span style="color:#f87171;">❌ Error</span>`;
+        console.error('[Skool Downloader] InPageWidget error:', err);
+        container.innerHTML = `<span style="color:#f87171;">❌ Error al encolar</span>`;
         setTimeout(() => InPageWidget.resetButton(container), 2500);
       }
     };

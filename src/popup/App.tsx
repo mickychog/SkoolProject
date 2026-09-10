@@ -426,7 +426,16 @@ export default function App() {
       </nav>
 
       {/* Main Tab Content Area */}
-      <main style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+      <main
+        style={{
+          flex: 1,
+          overflowY: activeTab === 'course' ? 'hidden' : 'auto',
+          padding: '14px',
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: 0,
+        }}
+      >
         {/* TAB 1: ACTIVE LESSON */}
         {activeTab === 'lesson' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -567,7 +576,7 @@ export default function App() {
 
         {/* TAB 2: FULL COURSE TREE */}
         {activeTab === 'course' && (
-          <div>
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
             {courseData && courseData.modules.length > 0 ? (
               <CourseTreeView course={courseData} onEnqueueTasks={handleEnqueueTasks} />
             ) : (

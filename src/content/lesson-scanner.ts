@@ -1,12 +1,6 @@
 /**
  * Deep Lesson Scanner: Multi-strategy extractor for active Skool lesson pages.
- * Strategies:
- * 1. Next.js payload (__NEXT_DATA__) inspection for active lesson media & resources
- * 2. Performance API (Network resource entries for .m3u8, Loom, Vimeo, CloudFront)
- * 3. DOM Video & Source elements
- * 4. DOM iFrames (Loom, Vimeo, Wistia, YouTube)
- * 5. Page Scripts and JSON blobs (Regex & Data props)
- * 6. Dataset attributes
+ * Runs in Content Script context (Zero-CORS, synchronous DOM & Next.js extraction).
  * Follows: docs/specs/02_ARCHITECTURE_SPEC.md
  */
 
@@ -19,15 +13,22 @@ export class LessonScanner {
    */
   static async scan(): Promise<CourseLesson | null> {
     const currentUrl = window.location.href;
-    if (!currentUrl.includes('/classroom/')) {
+    if (!currentUrl.includes('skool.com')) {
       return null;
     }
 
     const lessonTitle = this.extractLessonTitle();
     const lessonId = this.extractLessonId(currentUrl);
-    const media = await this.extractMedia();
+    const media = this.extractMedia();
     const attachments = this.extractAttachments();
     const descriptionText = this.extractLessonDescription();
+
+    // If no title was found and no media or attachments exist, verify if page is classroom
+    if (lessonTitle === 'Untitled Lesson' && !media && attachments.length === 0) {
+      if (!currentUrl.includes('/classroom') && !currentUrl.includes('?md=')) {
+        return null;
+      }
+    }
 
     return {
       lessonId,
@@ -70,9 +71,9 @@ export class LessonScanner {
   }
 
   /**
-   * Multi-strategy media detector
+   * Multi-strategy media detector (Content-Script Safe: No blocking cross-origin fetch)
    */
-  static async extractMedia(): Promise<MediaAsset | null> {
+  static extractMedia(): MediaAsset | null {
     const candidates: string[] = [];
 
     // Strategy 1: Next.js Payload (__NEXT_DATA__)
@@ -123,6 +124,7 @@ export class LessonScanner {
             name.includes('loom.com/embed') ||
             name.includes('player.vimeo.com/video') ||
             name.includes('fast.wistia.net/embed') ||
+            name.includes('stream.mux.com') ||
             (name.includes('.mp4') && !name.includes('thumb') && !name.includes('avatar'))
           ) {
             candidates.push(name);
@@ -148,7 +150,7 @@ export class LessonScanner {
     const iframes = Array.from(document.querySelectorAll<HTMLIFrameElement>('iframe'));
     for (const iframe of iframes) {
       const src = iframe.src || iframe.dataset.src || iframe.getAttribute('src');
-      if (src && !src.startsWith('about:')) {
+      if (src && !src.startsWith('about:') && !src.startsWith('javascript:')) {
         candidates.push(src);
       }
     }
@@ -169,31 +171,27 @@ export class LessonScanner {
       if (dataUrl) candidates.push(dataUrl);
     }
 
-    // Strategy 6: Script Tags (Search for .m3u8, Loom, Vimeo, Wistia, YouTube URLs)
+    // Strategy 6: Script Tags (Regex for .m3u8, Loom, Vimeo, Wistia, Mux, YouTube)
     try {
       const scripts = Array.from(document.querySelectorAll<HTMLScriptElement>('script'));
       for (const script of scripts) {
         const text = script.textContent || '';
         if (text.length > 20 && text.length < 500000) {
-          // Look for .m3u8 URLs
           const m3u8Matches = text.match(/https?:\/\/[^"'\\s>]+\.m3u8[^"'\\s>]*/gi);
           if (m3u8Matches) {
             m3u8Matches.forEach((m) => candidates.push(m.replace(/\\u0026/g, '&')));
           }
 
-          // Look for Loom URLs
           const loomMatches = text.match(/https?:\/\/(?:www\.)?loom\.com\/(?:share|embed)\/[a-zA-Z0-9_-]+/gi);
           if (loomMatches) {
             loomMatches.forEach((m) => candidates.push(m));
           }
 
-          // Look for Vimeo URLs
           const vimeoMatches = text.match(/https?:\/\/(?:player\.)?vimeo\.com\/(?:video\/)?[0-9]+/gi);
           if (vimeoMatches) {
             vimeoMatches.forEach((m) => candidates.push(m));
           }
 
-          // Look for Wistia URLs
           const wistiaMatches = text.match(/https?:\/\/(?:fast\.)?wistia\.(?:net|com)\/embed\/iframe\/[a-zA-Z0-9]+/gi);
           if (wistiaMatches) {
             wistiaMatches.forEach((m) => candidates.push(m));
@@ -204,7 +202,7 @@ export class LessonScanner {
       // Ignore
     }
 
-    // Remove duplicates
+    // Deduplicate candidates
     const uniqueCandidates = Array.from(new Set(candidates)).filter(Boolean);
 
     // Prioritize: HLS .m3u8 > Loom > Vimeo > Wistia > YouTube > MP4
@@ -223,11 +221,19 @@ export class LessonScanner {
 
     if (prioritized.length > 0) {
       const bestUrl = prioritized[0];
-      const resolved = await providerRegistry.resolveMedia(bestUrl);
+      const adapter = providerRegistry.findAdapter(bestUrl);
+      const provider = adapter ? adapter.providerType : 'skool_native';
+
       return {
-        provider: resolved.provider,
+        provider,
         sourceUrl: bestUrl,
-        qualities: resolved.qualities,
+        qualities: [
+          {
+            qualityLabel: 'Original',
+            streamUrl: bestUrl,
+            isHLS: bestUrl.includes('.m3u8'),
+          },
+        ],
       };
     }
 
