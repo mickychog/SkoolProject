@@ -150,8 +150,9 @@ export class LessonScanner {
         mediaUrl = rawLesson.video;
       } else if (rawLesson.video) {
         const v = rawLesson.video;
-        const rawToken = v.token || v.mux_token || v.jwt || v.playback_token || '';
+        const rawToken = v.token || v.mux_token || v.jwt || v.playback_token || v.muxToken || '';
         const muxToken = rawToken ? `?token=${rawToken}` : '';
+        const playbackId = v.mux_playback_id || v.playback_id || v.playbackId || v.muxPlaybackId || v.id || v.videoId;
         mediaUrl =
           v.signed_url ||
           v.hls_url ||
@@ -163,13 +164,17 @@ export class LessonScanner {
           v.loom_url ||
           (v.vimeo_id ? `https://player.vimeo.com/video/${v.vimeo_id}` : undefined) ||
           (v.youtube_id ? `https://www.youtube.com/watch?v=${v.youtube_id}` : undefined) ||
-          (v.mux_playback_id ? `https://stream.mux.com/${v.mux_playback_id}.m3u8${muxToken}` : undefined);
+          (playbackId && !String(playbackId).includes('/') ? `https://stream.mux.com/${playbackId}.m3u8${muxToken}` : undefined);
 
         if (mediaUrl && rawToken && !mediaUrl.includes('token=') && !mediaUrl.includes('jwt=')) {
           mediaUrl += (mediaUrl.includes('?') ? '&' : '?') + `token=${rawToken}`;
         }
       } else if (rawLesson.media_url || rawLesson.stream_url || rawLesson.playback_url) {
         mediaUrl = rawLesson.media_url || rawLesson.stream_url || rawLesson.playback_url;
+      } else if (rawLesson.mux_playback_id || rawLesson.playback_id) {
+        const pid = rawLesson.mux_playback_id || rawLesson.playback_id;
+        const tok = rawLesson.token || rawLesson.mux_token || '';
+        mediaUrl = `https://stream.mux.com/${pid}.m3u8${tok ? `?token=${tok}` : ''}`;
       }
 
       let media: MediaAsset | undefined;
@@ -224,6 +229,18 @@ export class LessonScanner {
   static extractMedia(): MediaAsset | null {
     const candidates: string[] = [];
 
+    // Strategy 0: Mux Player & Video Web Components
+    try {
+      const muxEls = Array.from(document.querySelectorAll('mux-player, mux-video, [playback-id], [data-playback-id], [data-mux-playback-id]'));
+      for (const el of muxEls) {
+        const pid = el.getAttribute('playback-id') || el.getAttribute('data-playback-id') || el.getAttribute('data-mux-playback-id') || (el as any).playbackId;
+        const tok = el.getAttribute('playback-token') || el.getAttribute('data-playback-token') || el.getAttribute('token') || (el as any).playbackToken;
+        if (pid) {
+          candidates.push(`https://stream.mux.com/${pid}.m3u8${tok ? `?token=${tok}` : ''}`);
+        }
+      }
+    } catch {}
+
     // Strategy 1: Network Resource Timing (performance.getEntriesByType)
     try {
       if (typeof performance !== 'undefined' && performance.getEntriesByType) {
@@ -231,14 +248,28 @@ export class LessonScanner {
         for (const entry of entries) {
           const name = entry.name || '';
           if (
+            name.includes('.xml') ||
+            name.includes('.svg') ||
+            name.includes('.png') ||
+            name.includes('.jpg') ||
+            name.includes('.jpeg') ||
+            name.includes('.gif') ||
+            name.includes('.webp') ||
+            name.includes('avatar') ||
+            name.includes('thumb')
+          ) {
+            continue;
+          }
+          if (
             name.includes('.m3u8') ||
+            name.includes('stream.mux.com') ||
+            name.includes('stream.video.skool.com') ||
+            name.includes('video.skool.com') ||
             name.includes('cdn.loom.com/sessions') ||
             name.includes('loom.com/share') ||
             name.includes('loom.com/embed') ||
             name.includes('player.vimeo.com/video') ||
-            name.includes('fast.wistia.net/embed') ||
-            name.includes('stream.mux.com') ||
-            (name.includes('.mp4') && !name.includes('thumb') && !name.includes('avatar'))
+            name.includes('fast.wistia.net/embed')
           ) {
             candidates.push(name);
           }

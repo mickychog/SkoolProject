@@ -187,8 +187,9 @@ export class CourseScanner {
             mediaUrl = l.video;
           } else if (l.video) {
             const v = l.video;
-            const rawToken = v.token || v.mux_token || v.jwt || v.playback_token || '';
+            const rawToken = v.token || v.mux_token || v.jwt || v.playback_token || v.muxToken || '';
             const muxToken = rawToken ? `?token=${rawToken}` : '';
+            const playbackId = v.mux_playback_id || v.playback_id || v.playbackId || v.muxPlaybackId || v.id || v.videoId;
             mediaUrl =
               v.signed_url ||
               v.hls_url ||
@@ -200,13 +201,17 @@ export class CourseScanner {
               v.loom_url ||
               (v.vimeo_id ? `https://player.vimeo.com/video/${v.vimeo_id}` : undefined) ||
               (v.youtube_id ? `https://www.youtube.com/watch?v=${v.youtube_id}` : undefined) ||
-              (v.mux_playback_id ? `https://stream.mux.com/${v.mux_playback_id}.m3u8${muxToken}` : undefined);
+              (playbackId && !String(playbackId).includes('/') ? `https://stream.mux.com/${playbackId}.m3u8${muxToken}` : undefined);
 
             if (mediaUrl && rawToken && !mediaUrl.includes('token=') && !mediaUrl.includes('jwt=')) {
               mediaUrl += (mediaUrl.includes('?') ? '&' : '?') + `token=${rawToken}`;
             }
           } else if (l.media_url || l.stream_url || l.playback_url) {
             mediaUrl = l.media_url || l.stream_url || l.playback_url;
+          } else if (l.mux_playback_id || l.playback_id) {
+            const pid = l.mux_playback_id || l.playback_id;
+            const tok = l.token || l.mux_token || '';
+            mediaUrl = `https://stream.mux.com/${pid}.m3u8${tok ? `?token=${tok}` : ''}`;
           }
 
           // Extract attachments

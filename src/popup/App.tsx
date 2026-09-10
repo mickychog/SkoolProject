@@ -185,15 +185,41 @@ export default function App() {
                     if (typeof rawLesson?.video === 'string') mediaUrl = rawLesson.video;
                     else if (rawLesson?.video) {
                       const v = rawLesson.video;
-                      const rawToken = v.token || v.mux_token || v.jwt || v.playback_token || '';
+                      const rawToken = v.token || v.mux_token || v.jwt || v.playback_token || v.muxToken || '';
                       const tok = rawToken ? `?token=${rawToken}` : '';
-                      mediaUrl = v.signed_url || v.hls_url || v.m3u8 || v.url || v.stream_url || v.playback_url || v.raw_url || v.loom_url || (v.mux_playback_id ? `https://stream.mux.com/${v.mux_playback_id}.m3u8${tok}` : undefined);
+                      const playbackId = v.mux_playback_id || v.playback_id || v.playbackId || v.muxPlaybackId || v.id || v.videoId;
+                      mediaUrl =
+                        v.signed_url ||
+                        v.hls_url ||
+                        v.m3u8 ||
+                        v.url ||
+                        v.stream_url ||
+                        v.playback_url ||
+                        v.raw_url ||
+                        v.loom_url ||
+                        (v.vimeo_id ? `https://player.vimeo.com/video/${v.vimeo_id}` : undefined) ||
+                        (v.youtube_id ? `https://www.youtube.com/watch?v=${v.youtube_id}` : undefined) ||
+                        (playbackId && !String(playbackId).includes('/') ? `https://stream.mux.com/${playbackId}.m3u8${tok}` : undefined);
+
                       if (mediaUrl && rawToken && !mediaUrl.includes('token=') && !mediaUrl.includes('jwt=')) {
                         mediaUrl += (mediaUrl.includes('?') ? '&' : '?') + `token=${rawToken}`;
                       }
+                    } else if (rawLesson?.mux_playback_id || rawLesson?.playback_id) {
+                      const pid = rawLesson.mux_playback_id || rawLesson.playback_id;
+                      const tok = rawLesson.token || rawLesson.mux_token || '';
+                      mediaUrl = `https://stream.mux.com/${pid}.m3u8${tok ? `?token=${tok}` : ''}`;
                     }
 
                     // DOM Media detection if not found
+                    if (!mediaUrl) {
+                      const muxEl = document.querySelector('mux-player, mux-video, [playback-id], [data-playback-id], [data-mux-playback-id]');
+                      if (muxEl) {
+                        const pid = muxEl.getAttribute('playback-id') || muxEl.getAttribute('data-playback-id') || muxEl.getAttribute('data-mux-playback-id') || (muxEl as any).playbackId;
+                        const tok = muxEl.getAttribute('playback-token') || muxEl.getAttribute('data-playback-token') || muxEl.getAttribute('token') || (muxEl as any).playbackToken;
+                        if (pid) mediaUrl = `https://stream.mux.com/${pid}.m3u8${tok ? `?token=${tok}` : ''}`;
+                      }
+                    }
+
                     if (!mediaUrl) {
                       const videoEl = document.querySelector('video');
                       if (videoEl?.src && !videoEl.src.startsWith('blob:')) mediaUrl = videoEl.src;
@@ -381,12 +407,23 @@ export default function App() {
                         if (typeof l.video === 'string') mediaUrl = l.video;
                         else if (l.video) {
                           const v = l.video;
-                          const rawToken = v.token || v.mux_token || v.jwt || v.playback_token || '';
+                          const rawToken = v.token || v.mux_token || v.jwt || v.playback_token || v.muxToken || '';
                           const tok = rawToken ? `?token=${rawToken}` : '';
-                          mediaUrl = v.signed_url || v.hls_url || v.m3u8 || v.url || v.stream_url || (v.mux_playback_id ? `https://stream.mux.com/${v.mux_playback_id}.m3u8${tok}` : undefined);
+                          const playbackId = v.mux_playback_id || v.playback_id || v.playbackId || v.muxPlaybackId || v.id || v.videoId;
+                          mediaUrl =
+                            v.signed_url ||
+                            v.hls_url ||
+                            v.m3u8 ||
+                            v.url ||
+                            v.stream_url ||
+                            (playbackId && !String(playbackId).includes('/') ? `https://stream.mux.com/${playbackId}.m3u8${tok}` : undefined);
                           if (mediaUrl && rawToken && !mediaUrl.includes('token=') && !mediaUrl.includes('jwt=')) {
                             mediaUrl += (mediaUrl.includes('?') ? '&' : '?') + `token=${rawToken}`;
                           }
+                        } else if (l.mux_playback_id || l.playback_id) {
+                          const pid = l.mux_playback_id || l.playback_id;
+                          const tok = l.token || l.mux_token || '';
+                          mediaUrl = `https://stream.mux.com/${pid}.m3u8${tok ? `?token=${tok}` : ''}`;
                         }
 
                         const rawAtts = l.attachments || l.files || [];
