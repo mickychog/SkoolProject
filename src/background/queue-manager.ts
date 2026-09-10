@@ -220,86 +220,99 @@ export class QueueManager {
     for (const task of tasksToStart) {
       this.state.activeTaskIds.push(task.id);
 
-      // 1. If task is a Skool lesson page URL, resolve stream first
-      if (task.assetType === 'video' && task.sourceUrl.includes('/classroom/')) {
+      if (task.assetType === 'video') {
         task.status = 'processing';
         this.saveState();
 
-        try {
-          const resolvedStream = await this.resolveLessonPageStream(task.sourceUrl);
-          if (resolvedStream && !resolvedStream.includes('/classroom/')) {
-            task.sourceUrl = resolvedStream;
-          } else {
-            // Check if there is an active tab on Skool that can scan it directly
-            const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-            const tab = tabs[0];
-            let activeLessonMediaUrl: string | null = null;
-            if (tab?.id && tab.url?.includes('/classroom/')) {
-              try {
-                const response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_ACTIVE_LESSON' });
-                if (response?.type === 'LESSON_SCANNED_SUCCESS' && response.payload?.media?.sourceUrl) {
-                  activeLessonMediaUrl = response.payload.media.sourceUrl;
-                }
-              } catch {
-                // Ignore
-              }
-            }
+        let targetUrl = task.sourceUrl;
 
-            if (activeLessonMediaUrl) {
-              task.sourceUrl = activeLessonMediaUrl;
-            } else {
-              // Mark cleanly as failed or completed text-only lesson (NEVER call chrome.downloads on a webpage)
-              task.status = 'failed';
-              task.error = 'No se encontró video reproducible en esta lección.';
-              this.state.activeTaskIds = this.state.activeTaskIds.filter((id) => id !== task.id);
-              this.saveState();
-              this.processNext();
-              continue;
+        // 1. If URL points to a Skool webpage, resolve stream first from HTML/Next.js/active tab
+        if (targetUrl.includes('skool.com') && targetUrl.includes('/classroom/')) {
+          const pageStream = await this.resolveLessonPageStream(targetUrl);
+          if (pageStream) {
+            targetUrl = pageStream;
+          }
+        }
+
+        // 2. Resolve through Provider Registry (Loom, Vimeo, Wistia, Skool Native HLS, YouTube)
+        try {
+          const resolved = await providerRegistry.resolveMedia(targetUrl);
+          if (resolved.qualities.length > 0) {
+            const bestStream = resolved.qualities[0].streamUrl;
+            if (bestStream && !bestStream.includes('/classroom/')) {
+              targetUrl = bestStream;
             }
           }
         } catch {
+          // Keep current targetUrl
+        }
+
+        // 3. Absolute Guard: NEVER pass raw webpage URL to chrome.downloads
+        if (targetUrl.includes('skool.com') && targetUrl.includes('/classroom/')) {
           task.status = 'failed';
-          task.error = 'No se pudo resolver el reproductor de video de la lección.';
+          task.error = 'No se encontró stream de video reproducible en esta lección.';
           this.state.activeTaskIds = this.state.activeTaskIds.filter((id) => id !== task.id);
           this.saveState();
           this.processNext();
           continue;
         }
-      }
 
-      // 2. Guard: NEVER pass a Skool webpage URL directly to chrome.downloads
-      if (task.sourceUrl.includes('skool.com') && task.sourceUrl.includes('/classroom/')) {
-        task.status = 'failed';
-        task.error = 'URL de página no descargable directamente.';
-        this.state.activeTaskIds = this.state.activeTaskIds.filter((id) => id !== task.id);
-        this.saveState();
-        this.processNext();
-        continue;
-      }
+        task.sourceUrl = targetUrl;
 
-      // 3. Check if it is an HLS stream (.m3u8)
-      if (task.sourceUrl.includes('.m3u8')) {
-        task.status = 'processing';
-        this.saveState();
-
-        try {
-          await OffscreenManager.ensureDocument();
-          chrome.runtime.sendMessage({
-            type: 'OFFSCREEN_START_HLS_DOWNLOAD',
-            payload: {
-              taskId: task.id,
-              manifestUrl: task.sourceUrl,
-              targetFileName: task.suggestedFileName,
-            },
-          });
-        } catch (err: unknown) {
-          task.status = 'failed';
-          task.error = err instanceof Error ? err.message : 'Error al iniciar Offscreen HLS';
-          this.state.activeTaskIds = this.state.activeTaskIds.filter((id) => id !== task.id);
+        // 4. If stream is HLS (.m3u8), process via Offscreen HLS assembler
+        if (targetUrl.includes('.m3u8')) {
+          task.status = 'processing';
           this.saveState();
+
+          try {
+            await OffscreenManager.ensureDocument();
+            chrome.runtime.sendMessage({
+              type: 'OFFSCREEN_START_HLS_DOWNLOAD',
+              payload: {
+                taskId: task.id,
+                manifestUrl: targetUrl,
+                targetFileName: task.suggestedFileName,
+              },
+            });
+          } catch (err: unknown) {
+            task.status = 'failed';
+            task.error = err instanceof Error ? err.message : 'Error al iniciar Offscreen HLS';
+            this.state.activeTaskIds = this.state.activeTaskIds.filter((id) => id !== task.id);
+            this.saveState();
+          }
+        } else {
+          // 5. Direct MP4 CDN stream download
+          task.status = 'downloading';
+          this.saveState();
+
+          try {
+            const downloadId = await chrome.downloads.download({
+              url: targetUrl,
+              filename: `${task.targetFolder}${task.suggestedFileName}`,
+              conflictAction: 'uniquify',
+              saveAs: false,
+            });
+
+            task.chromeDownloadId = downloadId;
+            this.saveState();
+          } catch (err: unknown) {
+            task.status = 'failed';
+            task.error = err instanceof Error ? err.message : 'Error al iniciar descarga';
+            this.state.activeTaskIds = this.state.activeTaskIds.filter((id) => id !== task.id);
+            this.saveState();
+          }
         }
       } else {
-        // 4. Direct download (PDFs, normal MP4 links, direct CDN streams)
+        // Attachment download
+        if (task.sourceUrl.includes('skool.com') && task.sourceUrl.includes('/classroom/')) {
+          task.status = 'failed';
+          task.error = 'URL de archivo adjunto no válida';
+          this.state.activeTaskIds = this.state.activeTaskIds.filter((id) => id !== task.id);
+          this.saveState();
+          this.processNext();
+          continue;
+        }
+
         task.status = 'downloading';
         this.saveState();
 
@@ -324,6 +337,21 @@ export class QueueManager {
   }
 
   private async resolveLessonPageStream(lessonUrl: string): Promise<string | null> {
+    // 1. Try active tab query if tab is on Skool
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tab = tabs[0];
+      if (tab?.id && tab.url?.includes('skool.com')) {
+        const response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_ACTIVE_LESSON' });
+        if (response?.type === 'LESSON_SCANNED_SUCCESS' && response.payload?.media?.sourceUrl) {
+          return response.payload.media.sourceUrl;
+        }
+      }
+    } catch {
+      // Ignore
+    }
+
+    // 2. Fetch page HTML and inspect Next.js payload & regex
     try {
       const res = await fetch(lessonUrl);
       if (!res.ok) return null;
@@ -344,35 +372,25 @@ export class QueueManager {
             if (v.stream_url) return v.stream_url;
             if (v.playback_url) return v.playback_url;
             if (v.raw_url) return v.raw_url;
-            if (v.loom_url) {
-              const resLoom = await providerRegistry.resolveMedia(v.loom_url);
-              if (resLoom.qualities[0]?.streamUrl) return resLoom.qualities[0].streamUrl;
-            }
-            if (v.vimeo_id) {
-              const resVimeo = await providerRegistry.resolveMedia(`https://player.vimeo.com/video/${v.vimeo_id}`);
-              if (resVimeo.qualities[0]?.streamUrl) return resVimeo.qualities[0].streamUrl;
-            }
+            if (v.loom_url) return v.loom_url;
+            if (v.vimeo_id) return `https://player.vimeo.com/video/${v.vimeo_id}`;
+            if (v.youtube_id) return `https://www.youtube.com/watch?v=${v.youtube_id}`;
+            if (v.mux_playback_id) return `https://stream.mux.com/${v.mux_playback_id}.m3u8`;
           }
         } catch {
           // Fallback to regex
         }
       }
 
-      // Look for HLS .m3u8, Loom, Vimeo, or YouTube URLs in page source or Next data
+      // Regex matches
       const m3u8Match = html.match(/https?:\/\/[^"'\\s>]+\.m3u8[^"'\\s>]*/i);
       if (m3u8Match) return m3u8Match[0].replace(/\\u0026/g, '&');
 
       const loomMatch = html.match(/https?:\/\/(?:www\.)?loom\.com\/(?:share|embed)\/[a-zA-Z0-9_-]+/i);
-      if (loomMatch) {
-        const resolved = await providerRegistry.resolveMedia(loomMatch[0]);
-        if (resolved.qualities[0]?.streamUrl) return resolved.qualities[0].streamUrl;
-      }
+      if (loomMatch) return loomMatch[0];
 
       const vimeoMatch = html.match(/https?:\/\/(?:player\.)?vimeo\.com\/(?:video\/)?[0-9]+/i);
-      if (vimeoMatch) {
-        const resolved = await providerRegistry.resolveMedia(vimeoMatch[0]);
-        if (resolved.qualities[0]?.streamUrl) return resolved.qualities[0].streamUrl;
-      }
+      if (vimeoMatch) return vimeoMatch[0];
 
       const mp4Match = html.match(/https?:\/\/[^"'\\s>]+\.mp4[^"'\\s>]*/i);
       if (mp4Match) return mp4Match[0].replace(/\\u0026/g, '&');

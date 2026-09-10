@@ -8,16 +8,12 @@
     "storage",
     "downloads",
     "offscreen",
-    "notifications"
+    "notifications",
+    "webRequest"
   ],
   "host_permissions": [
-    "https://www.skool.com/*"
-  ],
-  "optional_host_permissions": [
-    "https://*.loom.com/*",
-    "https://*.vimeo.com/*",
-    "https://*.wistia.com/*",
-    "https://*.youtube.com/*"
+    "https://*/*",
+    "http://*/*"
   ],
   "action": {
     "default_popup": "src/popup/index.html",

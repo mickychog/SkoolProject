@@ -45,19 +45,64 @@ export class HlsProcessor {
   }
 
   /**
+   * Parses master playlist and selects best quality media playlist URI
+   */
+  static parseBestQualityFromMaster(masterContent: string, baseUrl: string): string | null {
+    const lines = masterContent.split('\n');
+    let bestUri: string | null = null;
+    let maxBandwidth = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line.startsWith('#EXT-X-STREAM-INF:')) {
+        const bwMatch = line.match(/BANDWIDTH=(\d+)/i);
+        const bandwidth = bwMatch ? parseInt(bwMatch[1]) : 0;
+
+        // Find the next line with URI
+        for (let j = i + 1; j < lines.length; j++) {
+          const nextLine = lines[j].trim();
+          if (nextLine && !nextLine.startsWith('#')) {
+            if (bandwidth >= maxBandwidth || !bestUri) {
+              maxBandwidth = bandwidth;
+              bestUri = nextLine.startsWith('http') ? nextLine : new URL(nextLine, baseUrl).toString();
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    return bestUri;
+  }
+
+  /**
    * Downloads all segments sequentially with retry logic and reports progress
    */
   static async downloadAndAssemble(
     manifestUrl: string,
     onProgress?: (percent: number, current: number, total: number) => void
   ): Promise<Blob> {
-    // 1. Fetch media playlist
+    // 1. Fetch playlist
     const res = await fetch(manifestUrl);
     if (!res.ok) {
       throw new Error(`Failed to fetch media playlist: HTTP ${res.status}`);
     }
-    const manifestText = await res.text();
-    const segments = this.parseMediaPlaylist(manifestText, manifestUrl);
+    let manifestText = await res.text();
+    let targetPlaylistUrl = manifestUrl;
+
+    // If it's a master playlist, fetch the highest quality variant
+    if (manifestText.includes('#EXT-X-STREAM-INF')) {
+      const bestVariantUrl = this.parseBestQualityFromMaster(manifestText, manifestUrl);
+      if (bestVariantUrl) {
+        targetPlaylistUrl = bestVariantUrl;
+        const variantRes = await fetch(bestVariantUrl);
+        if (variantRes.ok) {
+          manifestText = await variantRes.text();
+        }
+      }
+    }
+
+    const segments = this.parseMediaPlaylist(manifestText, targetPlaylistUrl);
 
     if (segments.length === 0) {
       throw new Error('No media segments found in HLS playlist.');
