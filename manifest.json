@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Skool Course & Video Downloader",
+  "version": "1.0.0",
+  "description": "Download and organize courses, lessons, videos, and resources from Skool with ease.",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "downloads",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "https://www.skool.com/*"
+  ],
+  "optional_host_permissions": [
+    "https://*.loom.com/*",
+    "https://*.vimeo.com/*",
+    "https://*.wistia.com/*",
+    "https://*.youtube.com/*"
+  ],
+  "action": {
+    "default_popup": "src/popup/index.html",
+    "default_title": "Skool Downloader"
+  },
+  "background": {
+    "service_worker": "src/background/index.ts",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.skool.com/*"],
+      "js": ["src/content/index.ts"],
+      "run_at": "document_idle"
+    }
+  ]
+}

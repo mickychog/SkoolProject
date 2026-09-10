@@ -1,0 +1,656 @@
+import { useState, useEffect } from 'react';
+import {
+  Download,
+  FolderTree,
+  ListOrdered,
+  Settings,
+  Sparkles,
+  Video,
+  FileText,
+  Play,
+  Pause,
+  Trash2,
+  RefreshCw,
+  Layers,
+} from 'lucide-react';
+import { CourseLesson } from '@/types/course';
+import { QueueState } from '@/types/queue';
+
+type TabType = 'lesson' | 'course' | 'queue' | 'settings';
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState<TabType>('lesson');
+  const [activeLesson, setActiveLesson] = useState<CourseLesson | null>(null);
+  const [queueState, setQueueState] = useState<QueueState>({
+    tasks: {},
+    activeTaskIds: [],
+    isPaused: false,
+    maxConcurrent: 2,
+    defaultQuality: '1080p',
+  });
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [statusMessage, setStatusMessage] = useState<string>('');
+
+  // Request state and active tab on mount
+  useEffect(() => {
+    fetchActiveLesson();
+    fetchQueueState();
+
+    // Listen for queue updates
+    const messageListener = (message: any) => {
+      if (message.type === 'QUEUE_STATE_CHANGED') {
+        setQueueState(message.payload);
+      }
+    };
+    chrome.runtime?.onMessage?.addListener(messageListener);
+    return () => {
+      chrome.runtime?.onMessage?.removeListener(messageListener);
+    };
+  }, []);
+
+  const fetchActiveLesson = async () => {
+    setIsLoading(true);
+    setStatusMessage('Escaneando lección en pestaña activa...');
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab?.id) {
+        chrome.tabs.sendMessage(tab.id, { type: 'SCAN_ACTIVE_LESSON' }, (response) => {
+          if (response?.type === 'LESSON_SCANNED_SUCCESS') {
+            setActiveLesson(response.payload);
+            setStatusMessage('');
+          } else {
+            setStatusMessage(response?.payload?.message || 'Abre una lección de Skool.');
+          }
+          setIsLoading(false);
+        });
+      }
+    } catch {
+      setStatusMessage('Extensión lista. Navega a una lección de Skool.');
+      setIsLoading(false);
+    }
+  };
+
+  const fetchQueueState = () => {
+    chrome.runtime?.sendMessage?.({ type: 'QUEUE_GET_STATE' }, (response) => {
+      if (response?.payload) {
+        setQueueState(response.payload);
+      }
+    });
+  };
+
+  const handleDownloadActiveLesson = () => {
+    if (!activeLesson) return;
+
+    const tasks: any[] = [];
+
+    // Add video task if available
+    if (activeLesson.media) {
+      tasks.push({
+        courseTitle: 'Skool Course',
+        moduleTitle: 'Module 01',
+        moduleIndex: 1,
+        lessonTitle: activeLesson.lessonTitle,
+        lessonIndex: activeLesson.lessonIndex,
+        assetType: 'video',
+        title: `${activeLesson.lessonTitle} (Video)`,
+        sourceUrl: activeLesson.media.sourceUrl,
+        suggestedFileName: `${activeLesson.lessonTitle}.mp4`,
+        targetFolder: 'Skool/Course/01_Module/',
+      });
+    }
+
+    // Add attachments
+    activeLesson.attachments.forEach((att) => {
+      tasks.push({
+        courseTitle: 'Skool Course',
+        moduleTitle: 'Module 01',
+        moduleIndex: 1,
+        lessonTitle: activeLesson.lessonTitle,
+        lessonIndex: activeLesson.lessonIndex,
+        assetType: 'attachment',
+        title: att.fileName,
+        sourceUrl: att.downloadUrl,
+        suggestedFileName: att.fileName,
+        targetFolder: 'Skool/Course/01_Module/',
+      });
+    });
+
+    chrome.runtime.sendMessage({
+      type: 'QUEUE_ADD_TASKS',
+      payload: { tasks },
+    });
+
+    setActiveTab('queue');
+  };
+
+  const togglePauseQueue = () => {
+    if (queueState.isPaused) {
+      chrome.runtime.sendMessage({ type: 'QUEUE_RESUME' });
+    } else {
+      chrome.runtime.sendMessage({ type: 'QUEUE_PAUSE' });
+    }
+  };
+
+  const clearCompleted = () => {
+    chrome.runtime.sendMessage({ type: 'QUEUE_CLEAR_COMPLETED' });
+  };
+
+  const taskList = Object.values(queueState.tasks);
+  const activeCount = queueState.activeTaskIds.length;
+  const totalInQueue = taskList.filter((t) => t.status === 'queued' || t.status === 'downloading').length;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '560px', backgroundColor: '#090d16' }}>
+      {/* Top Header */}
+      <header
+        style={{
+          padding: '14px 16px',
+          borderBottom: '1px solid #1e293b',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          background: 'rgba(15, 23, 42, 0.8)',
+          backdropFilter: 'blur(8px)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div
+            style={{
+              width: '28px',
+              height: '28px',
+              borderRadius: '8px',
+              background: 'linear-gradient(135deg, #3b82f6, #10b981)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Sparkles size={16} color="#fff" />
+          </div>
+          <div>
+            <h1 style={{ fontSize: '14px', fontWeight: 700, color: '#f8fafc', lineHeight: 1.2 }}>
+              Skool Downloader
+            </h1>
+            <span style={{ fontSize: '11px', color: '#64748b' }}>Spec-Driven Edition</span>
+          </div>
+        </div>
+
+        {totalInQueue > 0 && (
+          <div
+            style={{
+              fontSize: '11px',
+              padding: '2px 8px',
+              borderRadius: '999px',
+              backgroundColor: '#1e3a8a',
+              color: '#93c5fd',
+              fontWeight: 600,
+            }}
+          >
+            {activeCount} activo / {totalInQueue} en cola
+          </div>
+        )}
+      </header>
+
+      {/* Navigation Tabs */}
+      <nav
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(4, 1fr)',
+          borderBottom: '1px solid #1e293b',
+          background: '#0c1322',
+        }}
+      >
+        <button
+          onClick={() => setActiveTab('lesson')}
+          style={{
+            padding: '10px 4px',
+            background: 'none',
+            border: 'none',
+            borderBottom: activeTab === 'lesson' ? '2px solid #3b82f6' : '2px solid transparent',
+            color: activeTab === 'lesson' ? '#60a5fa' : '#94a3b8',
+            fontSize: '12px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '4px',
+          }}
+        >
+          <Video size={14} />
+          Lección
+        </button>
+
+        <button
+          onClick={() => setActiveTab('course')}
+          style={{
+            padding: '10px 4px',
+            background: 'none',
+            border: 'none',
+            borderBottom: activeTab === 'course' ? '2px solid #3b82f6' : '2px solid transparent',
+            color: activeTab === 'course' ? '#60a5fa' : '#94a3b8',
+            fontSize: '12px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '4px',
+          }}
+        >
+          <FolderTree size={14} />
+          Curso
+        </button>
+
+        <button
+          onClick={() => setActiveTab('queue')}
+          style={{
+            padding: '10px 4px',
+            background: 'none',
+            border: 'none',
+            borderBottom: activeTab === 'queue' ? '2px solid #3b82f6' : '2px solid transparent',
+            color: activeTab === 'queue' ? '#60a5fa' : '#94a3b8',
+            fontSize: '12px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '4px',
+            position: 'relative',
+          }}
+        >
+          <ListOrdered size={14} />
+          Cola
+          {taskList.length > 0 && (
+            <span
+              style={{
+                width: '6px',
+                height: '6px',
+                borderRadius: '50%',
+                backgroundColor: '#3b82f6',
+              }}
+            />
+          )}
+        </button>
+
+        <button
+          onClick={() => setActiveTab('settings')}
+          style={{
+            padding: '10px 4px',
+            background: 'none',
+            border: 'none',
+            borderBottom: activeTab === 'settings' ? '2px solid #3b82f6' : '2px solid transparent',
+            color: activeTab === 'settings' ? '#60a5fa' : '#94a3b8',
+            fontSize: '12px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '4px',
+          }}
+        >
+          <Settings size={14} />
+          Ajustes
+        </button>
+      </nav>
+
+      {/* Main Tab Content Area */}
+      <main style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+        {/* TAB 1: ACTIVE LESSON */}
+        {activeTab === 'lesson' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {activeLesson ? (
+              <>
+                <div
+                  style={{
+                    backgroundColor: '#111827',
+                    border: '1px solid #1f2937',
+                    borderRadius: '10px',
+                    padding: '14px',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
+                    <span
+                      style={{
+                        fontSize: '10px',
+                        textTransform: 'uppercase',
+                        padding: '2px 6px',
+                        borderRadius: '4px',
+                        backgroundColor: '#1e293b',
+                        color: '#38bdf8',
+                        fontWeight: 700,
+                      }}
+                    >
+                      Lección Detectada
+                    </span>
+                  </div>
+                  <h2 style={{ fontSize: '14px', fontWeight: 600, color: '#f1f5f9', marginBottom: '8px' }}>
+                    {activeLesson.lessonTitle}
+                  </h2>
+                  <div style={{ display: 'flex', gap: '12px', fontSize: '12px', color: '#94a3b8' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <Video size={13} color="#60a5fa" />
+                      {activeLesson.media ? '1 Video HD' : 'Sin video nativo'}
+                    </span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <FileText size={13} color="#34d399" />
+                      {activeLesson.attachments.length} Recursos
+                    </span>
+                  </div>
+                </div>
+
+                {/* Attachments Preview */}
+                {activeLesson.attachments.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase' }}>
+                      Recursos Adjuntos ({activeLesson.attachments.length})
+                    </span>
+                    {activeLesson.attachments.map((att) => (
+                      <div
+                        key={att.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '8px 10px',
+                          backgroundColor: '#0f172a',
+                          border: '1px solid #1e293b',
+                          borderRadius: '6px',
+                          fontSize: '12px',
+                        }}
+                      >
+                        <span style={{ color: '#cbd5e1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '280px' }}>
+                          {att.fileName}
+                        </span>
+                        <span style={{ fontSize: '10px', color: '#64748b', textTransform: 'uppercase' }}>
+                          {att.fileExtension}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <button
+                  onClick={handleDownloadActiveLesson}
+                  style={{
+                    marginTop: '8px',
+                    padding: '12px',
+                    borderRadius: '8px',
+                    backgroundColor: '#2563eb',
+                    border: 'none',
+                    color: '#fff',
+                    fontWeight: 600,
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    boxShadow: '0 4px 12px rgba(37, 99, 235, 0.3)',
+                  }}
+                >
+                  <Download size={16} />
+                  Descargar Lección Completa
+                </button>
+              </>
+            ) : (
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '40px 20px',
+                  textAlign: 'center',
+                  gap: '12px',
+                }}
+              >
+                <Layers size={36} color="#475569" />
+                <p style={{ fontSize: '13px', color: '#94a3b8' }}>
+                  {statusMessage || 'Abre una lección de Skool para detectarla automáticamente.'}
+                </p>
+                <button
+                  onClick={fetchActiveLesson}
+                  disabled={isLoading}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '6px',
+                    backgroundColor: '#1e293b',
+                    border: '1px solid #334155',
+                    color: '#f1f5f9',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <RefreshCw size={13} className={isLoading ? 'animate-spin' : ''} />
+                  Reescanear Pestaña
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 2: FULL COURSE TREE */}
+        {activeTab === 'course' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', textAlign: 'center', padding: '20px 0' }}>
+            <FolderTree size={36} color="#60a5fa" style={{ margin: '0 auto' }} />
+            <h3 style={{ fontSize: '14px', fontWeight: 600, color: '#f8fafc' }}>
+              Escáner de Curso Completo
+            </h3>
+            <p style={{ fontSize: '12px', color: '#94a3b8', lineHeight: 1.5 }}>
+              Genera la lista completa de módulos, lecciones y archivos adjuntos del aula virtual para descarga organizada en lote.
+            </p>
+            <button
+              onClick={() => {
+                setStatusMessage('Iniciando escaneo de módulos...');
+              }}
+              style={{
+                marginTop: '10px',
+                padding: '10px 16px',
+                borderRadius: '8px',
+                backgroundColor: '#10b981',
+                border: 'none',
+                color: '#fff',
+                fontWeight: 600,
+                fontSize: '13px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+              }}
+            >
+              <RefreshCw size={15} />
+              Escanear Estructura del Curso
+            </button>
+          </div>
+        )}
+
+        {/* TAB 3: DOWNLOAD QUEUE */}
+        {activeTab === 'queue' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {/* Controls Bar */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '12px', color: '#94a3b8', fontWeight: 600 }}>
+                {taskList.length} Tareas Totales
+              </span>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  onClick={togglePauseQueue}
+                  style={{
+                    padding: '4px 8px',
+                    borderRadius: '4px',
+                    backgroundColor: '#1e293b',
+                    border: '1px solid #334155',
+                    color: '#cbd5e1',
+                    fontSize: '11px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                >
+                  {queueState.isPaused ? <Play size={11} color="#34d399" /> : <Pause size={11} color="#fbbf24" />}
+                  {queueState.isPaused ? 'Reanudar' : 'Pausar'}
+                </button>
+                <button
+                  onClick={clearCompleted}
+                  style={{
+                    padding: '4px 8px',
+                    borderRadius: '4px',
+                    backgroundColor: '#1e293b',
+                    border: '1px solid #334155',
+                    color: '#cbd5e1',
+                    fontSize: '11px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                >
+                  <Trash2 size={11} />
+                  Limpiar
+                </button>
+              </div>
+            </div>
+
+            {/* Task Items List */}
+            {taskList.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {taskList.map((task) => (
+                  <div
+                    key={task.id}
+                    style={{
+                      padding: '10px',
+                      backgroundColor: '#111827',
+                      border: '1px solid #1e293b',
+                      borderRadius: '8px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '6px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
+                        {task.assetType === 'video' ? (
+                          <Video size={14} color="#60a5fa" />
+                        ) : (
+                          <FileText size={14} color="#34d399" />
+                        )}
+                        <span style={{ fontSize: '12px', fontWeight: 500, color: '#f1f5f9', textOverflow: 'ellipsis', whiteSpace: 'nowrap', overflow: 'hidden', maxWidth: '240px' }}>
+                          {task.title}
+                        </span>
+                      </div>
+                      <span
+                        style={{
+                          fontSize: '10px',
+                          padding: '1px 6px',
+                          borderRadius: '4px',
+                          backgroundColor:
+                            task.status === 'completed'
+                              ? '#064e3b'
+                              : task.status === 'downloading'
+                              ? '#1e3a8a'
+                              : task.status === 'failed'
+                              ? '#7f1d1d'
+                              : '#1e293b',
+                          color:
+                            task.status === 'completed'
+                              ? '#34d399'
+                              : task.status === 'downloading'
+                              ? '#93c5fd'
+                              : task.status === 'failed'
+                              ? '#f87171'
+                              : '#94a3b8',
+                          fontWeight: 600,
+                          textTransform: 'uppercase',
+                        }}
+                      >
+                        {task.status}
+                      </span>
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div style={{ height: '4px', backgroundColor: '#1e293b', borderRadius: '2px', overflow: 'hidden' }}>
+                      <div
+                        style={{
+                          width: `${task.progressPercent}%`,
+                          height: '100%',
+                          backgroundColor: task.status === 'completed' ? '#10b981' : '#3b82f6',
+                          transition: 'width 0.3s ease',
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '40px 0', color: '#64748b', fontSize: '12px' }}>
+                No hay descargas activas en cola.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 4: SETTINGS */}
+        {activeTab === 'settings' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: '#cbd5e1', display: 'block', marginBottom: '6px' }}>
+                Calidad de Video Predeterminada
+              </label>
+              <select
+                value={queueState.defaultQuality}
+                onChange={(e) => setQueueState({ ...queueState, defaultQuality: e.target.value })}
+                style={{
+                  width: '100%',
+                  padding: '8px 10px',
+                  backgroundColor: '#111827',
+                  border: '1px solid #1f2937',
+                  borderRadius: '6px',
+                  color: '#f1f5f9',
+                  fontSize: '12px',
+                }}
+              >
+                <option value="1080p">1080p (Full HD)</option>
+                <option value="720p">720p (HD)</option>
+                <option value="480p">480p (SD)</option>
+                <option value="highest">Máxima Disponible</option>
+              </select>
+            </div>
+
+            <div>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: '#cbd5e1', display: 'block', marginBottom: '6px' }}>
+                Descargas Simultáneas Máximas
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="4"
+                value={queueState.maxConcurrent}
+                onChange={(e) => setQueueState({ ...queueState, maxConcurrent: parseInt(e.target.value) || 2 })}
+                style={{
+                  width: '100%',
+                  padding: '8px 10px',
+                  backgroundColor: '#111827',
+                  border: '1px solid #1f2937',
+                  borderRadius: '6px',
+                  color: '#f1f5f9',
+                  fontSize: '12px',
+                }}
+              />
+              <span style={{ fontSize: '11px', color: '#64748b', marginTop: '4px', display: 'block' }}>
+                Recomendado: 2 para evitar saturación de red y rate limits.
+              </span>
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
