@@ -53,7 +53,23 @@ export default function App() {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       const tab = tabs[0];
       if (tab?.id && tab.url?.includes('skool.com')) {
-        const response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_ACTIVE_LESSON' });
+        let response: any = null;
+        try {
+          response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_ACTIVE_LESSON' });
+        } catch {
+          // Auto-recovery: inject content script if tab was opened before extension reload
+          try {
+            await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              files: ['src/content/index.ts'],
+            });
+            await new Promise((r) => setTimeout(r, 120));
+            response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_ACTIVE_LESSON' });
+          } catch {
+            // Ignore
+          }
+        }
+
         if (response?.type === 'LESSON_SCANNED_SUCCESS' && response.payload) {
           setActiveLesson(response.payload);
           setStatusMessage('');
@@ -64,7 +80,7 @@ export default function App() {
         setStatusMessage('Navega a una lección de Skool en la pestaña activa.');
       }
     } catch {
-      setStatusMessage('Navega a una lección de Skool y presiona Reescanear.');
+      setStatusMessage('Recarga la pestaña de Skool (F5) y presiona Reescanear.');
     } finally {
       setIsLoading(false);
     }
@@ -77,7 +93,23 @@ export default function App() {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       const tab = tabs[0];
       if (tab?.id && tab.url?.includes('skool.com')) {
-        const response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_FULL_COURSE' });
+        let response: any = null;
+        try {
+          response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_FULL_COURSE' });
+        } catch {
+          // Auto-recovery: inject content script if tab was opened before extension reload
+          try {
+            await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              files: ['src/content/index.ts'],
+            });
+            await new Promise((r) => setTimeout(r, 120));
+            response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_FULL_COURSE' });
+          } catch {
+            // Ignore
+          }
+        }
+
         if (response?.type === 'COURSE_SCANNED_SUCCESS' && response.payload) {
           setCourseData(response.payload);
           setStatusMessage('');
@@ -88,7 +120,7 @@ export default function App() {
         setStatusMessage('Abre una comunidad de Skool en la pestaña activa.');
       }
     } catch {
-      setStatusMessage('Error al conectar con la página. Recarga la pestaña de Skool.');
+      setStatusMessage('Error al conectar con la página. Recarga la pestaña de Skool (F5).');
     } finally {
       setIsLoading(false);
     }

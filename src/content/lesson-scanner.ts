@@ -17,18 +17,13 @@ export class LessonScanner {
       return null;
     }
 
-    const lessonTitle = this.extractLessonTitle();
-    const lessonId = this.extractLessonId(currentUrl);
-    const media = this.extractMedia();
-    const attachments = this.extractAttachments();
-    const descriptionText = this.extractLessonDescription();
+    const nextDataLesson = this.extractLessonFromNextData(currentUrl);
 
-    // If no title was found and no media or attachments exist, verify if page is classroom
-    if (lessonTitle === 'Untitled Lesson' && !media && attachments.length === 0) {
-      if (!currentUrl.includes('/classroom') && !currentUrl.includes('?md=')) {
-        return null;
-      }
-    }
+    const lessonTitle = nextDataLesson?.lessonTitle || this.extractLessonTitle();
+    const lessonId = nextDataLesson?.lessonId || this.extractLessonId(currentUrl);
+    const media = nextDataLesson?.media || this.extractMedia();
+    const attachments = nextDataLesson?.attachments?.length ? nextDataLesson.attachments : this.extractAttachments();
+    const descriptionText = nextDataLesson?.descriptionHtml || this.extractLessonDescription();
 
     return {
       lessonId,
@@ -48,7 +43,7 @@ export class LessonScanner {
     if (heading && heading.textContent?.trim()) {
       return heading.textContent.trim();
     }
-    return document.title.replace('· Skool', '').trim() || 'Untitled Lesson';
+    return document.title.replace('· Skool', '').trim() || 'Lección de Skool';
   }
 
   static extractLessonId(url: string): string {
@@ -71,12 +66,9 @@ export class LessonScanner {
   }
 
   /**
-   * Multi-strategy media detector (Content-Script Safe: No blocking cross-origin fetch)
+   * Deep search in Next.js props for active lesson
    */
-  static extractMedia(): MediaAsset | null {
-    const candidates: string[] = [];
-
-    // Strategy 1: Next.js Payload (__NEXT_DATA__)
+  static extractLessonFromNextData(currentUrl: string): Partial<CourseLesson> | null {
     try {
       let nextData: any = null;
       const scriptEl = document.getElementById('__NEXT_DATA__');
@@ -86,32 +78,102 @@ export class LessonScanner {
         nextData = (window as any).__NEXT_DATA__;
       }
 
-      if (nextData?.props?.pageProps) {
-        const pageProps = nextData.props.pageProps;
-        const currentLesson = pageProps.currentLesson || pageProps.lesson;
-        if (currentLesson) {
-          if (typeof currentLesson.video === 'string') {
-            candidates.push(currentLesson.video);
-          } else if (currentLesson.video) {
-            const v = currentLesson.video;
-            if (v.hls_url) candidates.push(v.hls_url);
-            if (v.m3u8) candidates.push(v.m3u8);
-            if (v.url) candidates.push(v.url);
-            if (v.stream_url) candidates.push(v.stream_url);
-            if (v.playback_url) candidates.push(v.playback_url);
-            if (v.raw_url) candidates.push(v.raw_url);
-            if (v.loom_url) candidates.push(v.loom_url);
-            if (v.vimeo_id) candidates.push(`https://player.vimeo.com/video/${v.vimeo_id}`);
-            if (v.youtube_id) candidates.push(`https://www.youtube.com/watch?v=${v.youtube_id}`);
-            if (v.mux_playback_id) candidates.push(`https://stream.mux.com/${v.mux_playback_id}.m3u8`);
+      if (!nextData?.props?.pageProps) return null;
+      const pp = nextData.props.pageProps;
+
+      // 1. Direct active lesson props
+      let rawLesson = pp.currentLesson || pp.lesson || pp.activeLesson;
+
+      // 2. Search in course / modules / sets if not direct
+      if (!rawLesson) {
+        const course = pp.currentCourse || pp.course || pp.group?.course;
+        const modules = course?.modules || course?.sets || course?.children || [];
+        const lessonId = this.extractLessonId(currentUrl);
+
+        for (const mod of modules) {
+          const lessons = mod.lessons || mod.children || mod.items || [];
+          for (const l of lessons) {
+            if (l.id === lessonId || currentUrl.includes(l.id)) {
+              rawLesson = l;
+              break;
+            }
           }
+          if (rawLesson) break;
         }
       }
-    } catch {
-      // Ignore Next.js parse error
-    }
 
-    // Strategy 2: Network Resource Timing (performance.getEntriesByType)
+      if (!rawLesson) return null;
+
+      const title = rawLesson.name || rawLesson.title;
+      const id = rawLesson.id || this.extractLessonId(currentUrl);
+
+      // Extract media
+      let mediaUrl: string | undefined;
+      if (typeof rawLesson.video === 'string') {
+        mediaUrl = rawLesson.video;
+      } else if (rawLesson.video) {
+        const v = rawLesson.video;
+        mediaUrl =
+          v.hls_url ||
+          v.m3u8 ||
+          v.url ||
+          v.stream_url ||
+          v.playback_url ||
+          v.raw_url ||
+          v.loom_url ||
+          (v.vimeo_id ? `https://player.vimeo.com/video/${v.vimeo_id}` : undefined) ||
+          (v.youtube_id ? `https://www.youtube.com/watch?v=${v.youtube_id}` : undefined) ||
+          (v.mux_playback_id ? `https://stream.mux.com/${v.mux_playback_id}.m3u8` : undefined);
+      }
+
+      let media: MediaAsset | undefined;
+      if (mediaUrl) {
+        const adapter = providerRegistry.findAdapter(mediaUrl);
+        media = {
+          provider: adapter ? adapter.providerType : 'skool_native',
+          sourceUrl: mediaUrl,
+          qualities: [
+            {
+              qualityLabel: 'Original',
+              streamUrl: mediaUrl,
+              isHLS: mediaUrl.includes('.m3u8'),
+            },
+          ],
+        };
+      }
+
+      // Extract attachments
+      const rawAtts = rawLesson.attachments || rawLesson.files || rawLesson.resources || [];
+      const attachments = rawAtts.map((att: any, idx: number) => {
+        const fileName = att.name || att.fileName || att.title || `archivo_${idx + 1}.pdf`;
+        const ext = fileName.includes('.') ? fileName.split('.').pop() || 'pdf' : 'pdf';
+        return {
+          id: att.id || `att_next_${idx}`,
+          fileName,
+          downloadUrl: att.url || att.download_url || att.link || '',
+          fileExtension: ext,
+        };
+      }).filter((a: any) => Boolean(a.downloadUrl));
+
+      return {
+        lessonId: id,
+        lessonTitle: title,
+        media,
+        attachments,
+        descriptionHtml: rawLesson.description || rawLesson.content,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Multi-strategy media detector (Content-Script Safe)
+   */
+  static extractMedia(): MediaAsset | null {
+    const candidates: string[] = [];
+
+    // Strategy 1: Network Resource Timing (performance.getEntriesByType)
     try {
       if (typeof performance !== 'undefined' && performance.getEntriesByType) {
         const entries = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
@@ -135,7 +197,7 @@ export class LessonScanner {
       // Ignore performance API errors
     }
 
-    // Strategy 3: Native <video> and <source> elements
+    // Strategy 2: Native <video> and <source> elements
     const videos = Array.from(document.querySelectorAll<HTMLVideoElement>('video'));
     for (const v of videos) {
       if (v.currentSrc && !v.currentSrc.startsWith('blob:')) candidates.push(v.currentSrc);
@@ -146,7 +208,7 @@ export class LessonScanner {
       }
     }
 
-    // Strategy 4: iFrames (Loom, Vimeo, Wistia, YouTube)
+    // Strategy 3: iFrames (Loom, Vimeo, Wistia, YouTube)
     const iframes = Array.from(document.querySelectorAll<HTMLIFrameElement>('iframe'));
     for (const iframe of iframes) {
       const src = iframe.src || iframe.dataset.src || iframe.getAttribute('src');
@@ -155,7 +217,7 @@ export class LessonScanner {
       }
     }
 
-    // Strategy 5: DOM Dataset attributes & Links
+    // Strategy 4: DOM Dataset attributes & Links
     const videoContainers = Array.from(
       document.querySelectorAll<HTMLElement>(
         '[data-video-url], [data-hls-url], [data-stream-url], [data-playback-url], a[href*="loom.com"], a[href*="vimeo.com"], a[href*="youtu"]'
@@ -171,7 +233,7 @@ export class LessonScanner {
       if (dataUrl) candidates.push(dataUrl);
     }
 
-    // Strategy 6: Script Tags (Regex for .m3u8, Loom, Vimeo, Wistia, Mux, YouTube)
+    // Strategy 5: Script Tags (Regex for .m3u8, Loom, Vimeo, Wistia, Mux, YouTube)
     try {
       const scripts = Array.from(document.querySelectorAll<HTMLScriptElement>('script'));
       for (const script of scripts) {
@@ -246,32 +308,7 @@ export class LessonScanner {
   static extractAttachments() {
     const attachmentsMap = new Map<string, { id: string; fileName: string; downloadUrl: string; fileExtension: string }>();
 
-    // 1. Next.js attachments
-    try {
-      const scriptEl = document.getElementById('__NEXT_DATA__');
-      if (scriptEl && scriptEl.textContent) {
-        const nextData = JSON.parse(scriptEl.textContent);
-        const currentLesson = nextData.props?.pageProps?.currentLesson || nextData.props?.pageProps?.lesson;
-        const rawAtts = currentLesson?.attachments || currentLesson?.files || [];
-        rawAtts.forEach((att: any, idx: number) => {
-          if (att.url || att.download_url) {
-            const fileName = att.name || att.fileName || att.title || `archivo_${idx + 1}.pdf`;
-            const ext = fileName.includes('.') ? fileName.split('.').pop() || 'pdf' : 'pdf';
-            const url = att.url || att.download_url;
-            attachmentsMap.set(url, {
-              id: att.id || `att_next_${idx}`,
-              fileName,
-              downloadUrl: url,
-              fileExtension: ext,
-            });
-          }
-        });
-      }
-    } catch {
-      // Ignore
-    }
-
-    // 2. DOM attachment links
+    // DOM attachment links
     const attachmentLinks = Array.from(
       document.querySelectorAll<HTMLAnchorElement>(
         'a[download], a[href*="download"], a[href*="s3.amazonaws.com"], a[href*="cloudfront.net"], [class*="attachment"] a, [class*="file"] a, a[href*="drive.google.com"], a[href*="dropbox.com"]'
