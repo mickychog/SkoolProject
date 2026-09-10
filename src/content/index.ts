@@ -6,8 +6,26 @@
 import { ExtensionMessage } from '@/types/messages';
 import { LessonScanner } from './lesson-scanner';
 import { CourseScanner } from './course-scanner';
+import { InPageWidget } from './inpage-widget';
 
 console.log('[Skool Downloader] Content script loaded on Skool.com');
+
+// Mount in-page floating quick download action
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => InPageWidget.mount());
+} else {
+  InPageWidget.mount();
+}
+
+// Observe URL changes in SPA
+let lastUrl = window.location.href;
+const observer = new MutationObserver(() => {
+  if (window.location.href !== lastUrl) {
+    lastUrl = window.location.href;
+    InPageWidget.mount();
+  }
+});
+observer.observe(document, { subtree: true, childList: true });
 
 // Listen for messages from Popup or Background
 chrome.runtime.onMessage.addListener(
