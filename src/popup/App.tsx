@@ -185,8 +185,12 @@ export default function App() {
                     if (typeof rawLesson?.video === 'string') mediaUrl = rawLesson.video;
                     else if (rawLesson?.video) {
                       const v = rawLesson.video;
-                      const tok = v.token || v.mux_token || v.jwt ? `?token=${v.token || v.mux_token || v.jwt}` : '';
+                      const rawToken = v.token || v.mux_token || v.jwt || v.playback_token || '';
+                      const tok = rawToken ? `?token=${rawToken}` : '';
                       mediaUrl = v.signed_url || v.hls_url || v.m3u8 || v.url || v.stream_url || v.playback_url || v.raw_url || v.loom_url || (v.mux_playback_id ? `https://stream.mux.com/${v.mux_playback_id}.m3u8${tok}` : undefined);
+                      if (mediaUrl && rawToken && !mediaUrl.includes('token=') && !mediaUrl.includes('jwt=')) {
+                        mediaUrl += (mediaUrl.includes('?') ? '&' : '?') + `token=${rawToken}`;
+                      }
                     }
 
                     // DOM Media detection if not found
@@ -377,8 +381,12 @@ export default function App() {
                         if (typeof l.video === 'string') mediaUrl = l.video;
                         else if (l.video) {
                           const v = l.video;
-                          const tok = v.token || v.mux_token || v.jwt ? `?token=${v.token || v.mux_token || v.jwt}` : '';
+                          const rawToken = v.token || v.mux_token || v.jwt || v.playback_token || '';
+                          const tok = rawToken ? `?token=${rawToken}` : '';
                           mediaUrl = v.signed_url || v.hls_url || v.m3u8 || v.url || v.stream_url || (v.mux_playback_id ? `https://stream.mux.com/${v.mux_playback_id}.m3u8${tok}` : undefined);
+                          if (mediaUrl && rawToken && !mediaUrl.includes('token=') && !mediaUrl.includes('jwt=')) {
+                            mediaUrl += (mediaUrl.includes('?') ? '&' : '?') + `token=${rawToken}`;
+                          }
                         }
 
                         const rawAtts = l.attachments || l.files || [];

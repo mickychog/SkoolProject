@@ -17,6 +17,12 @@ export class HlsProcessor {
     const segments: HlsSegment[] = [];
     let currentDuration = 0;
 
+    let baseSearch = '';
+    try {
+      const baseObj = new URL(playlistBaseUrl);
+      baseSearch = baseObj.search;
+    } catch {}
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
 
@@ -27,9 +33,22 @@ export class HlsProcessor {
         }
       } else if (line && !line.startsWith('#')) {
         let segmentUrl = line;
-        if (!segmentUrl.startsWith('http')) {
-          const urlObj = new URL(line, playlistBaseUrl);
-          segmentUrl = urlObj.toString();
+        try {
+          if (!segmentUrl.startsWith('http')) {
+            const urlObj = new URL(line, playlistBaseUrl);
+            if (!urlObj.search && baseSearch) {
+              urlObj.search = baseSearch;
+            }
+            segmentUrl = urlObj.toString();
+          } else {
+            const urlObj = new URL(segmentUrl);
+            if (!urlObj.search && baseSearch) {
+              urlObj.search = baseSearch;
+              segmentUrl = urlObj.toString();
+            }
+          }
+        } catch {
+          // Fallback to raw line
         }
 
         segments.push({
@@ -52,6 +71,12 @@ export class HlsProcessor {
     let bestUri: string | null = null;
     let maxBandwidth = 0;
 
+    let baseSearch = '';
+    try {
+      const baseObj = new URL(baseUrl);
+      baseSearch = baseObj.search;
+    } catch {}
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
       if (line.startsWith('#EXT-X-STREAM-INF:')) {
@@ -64,7 +89,17 @@ export class HlsProcessor {
           if (nextLine && !nextLine.startsWith('#')) {
             if (bandwidth >= maxBandwidth || !bestUri) {
               maxBandwidth = bandwidth;
-              bestUri = nextLine.startsWith('http') ? nextLine : new URL(nextLine, baseUrl).toString();
+              try {
+                let resolved = nextLine.startsWith('http') ? nextLine : new URL(nextLine, baseUrl).toString();
+                const resolvedObj = new URL(resolved);
+                if (!resolvedObj.search && baseSearch) {
+                  resolvedObj.search = baseSearch;
+                  resolved = resolvedObj.toString();
+                }
+                bestUri = resolved;
+              } catch {
+                bestUri = nextLine;
+              }
             }
             break;
           }

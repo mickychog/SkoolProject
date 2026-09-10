@@ -49,9 +49,23 @@ export class SkoolNativeAdapter extends BaseMediaProviderAdapter {
       } else if (line && !line.startsWith('#')) {
         // This line is the stream URI
         let streamUrl = line;
-        if (!streamUrl.startsWith('http')) {
-          const urlObj = new URL(line, baseUrl);
-          streamUrl = urlObj.toString();
+        try {
+          const baseObj = new URL(baseUrl);
+          if (!streamUrl.startsWith('http')) {
+            const urlObj = new URL(line, baseUrl);
+            if (!urlObj.search && baseObj.search) {
+              urlObj.search = baseObj.search;
+            }
+            streamUrl = urlObj.toString();
+          } else {
+            const urlObj = new URL(streamUrl);
+            if (!urlObj.search && baseObj.search) {
+              urlObj.search = baseObj.search;
+              streamUrl = urlObj.toString();
+            }
+          }
+        } catch {
+          // Fallback to raw line
         }
 
         const height = currentRes?.height || (currentBitrate ? Math.round(currentBitrate / 1000) : 720);

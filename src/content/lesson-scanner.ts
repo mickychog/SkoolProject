@@ -150,7 +150,8 @@ export class LessonScanner {
         mediaUrl = rawLesson.video;
       } else if (rawLesson.video) {
         const v = rawLesson.video;
-        const muxToken = v.token || v.mux_token || v.jwt ? `?token=${v.token || v.mux_token || v.jwt}` : '';
+        const rawToken = v.token || v.mux_token || v.jwt || v.playback_token || '';
+        const muxToken = rawToken ? `?token=${rawToken}` : '';
         mediaUrl =
           v.signed_url ||
           v.hls_url ||
@@ -163,6 +164,10 @@ export class LessonScanner {
           (v.vimeo_id ? `https://player.vimeo.com/video/${v.vimeo_id}` : undefined) ||
           (v.youtube_id ? `https://www.youtube.com/watch?v=${v.youtube_id}` : undefined) ||
           (v.mux_playback_id ? `https://stream.mux.com/${v.mux_playback_id}.m3u8${muxToken}` : undefined);
+
+        if (mediaUrl && rawToken && !mediaUrl.includes('token=') && !mediaUrl.includes('jwt=')) {
+          mediaUrl += (mediaUrl.includes('?') ? '&' : '?') + `token=${rawToken}`;
+        }
       } else if (rawLesson.media_url || rawLesson.stream_url || rawLesson.playback_url) {
         mediaUrl = rawLesson.media_url || rawLesson.stream_url || rawLesson.playback_url;
       }
