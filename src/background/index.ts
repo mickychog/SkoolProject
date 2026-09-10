@@ -171,3 +171,16 @@ chrome.runtime.onMessage.addListener(
 chrome.downloads.onChanged.addListener((delta) => {
   queueManager.handleChromeDownloadChange(delta);
 });
+
+// Broadcast URL changes when navigating in Skool tabs
+if (chrome.tabs?.onUpdated) {
+  chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
+    if (changeInfo.url && (changeInfo.url.includes('skool.com') || tab.url?.includes('skool.com'))) {
+      chrome.runtime.sendMessage({
+        type: 'TAB_URL_CHANGED',
+        payload: { url: changeInfo.url || tab.url || '' },
+      }).catch(() => {});
+    }
+  });
+}
+

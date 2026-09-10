@@ -27,9 +27,13 @@ export class LessonScanner {
 
     return {
       lessonId,
-      lessonIndex: 1,
+      lessonIndex: nextDataLesson?.lessonIndex || 1,
       lessonTitle,
       url: currentUrl,
+      moduleTitle: nextDataLesson?.moduleTitle || this.extractModuleTitleFromDom(),
+      moduleIndex: nextDataLesson?.moduleIndex || 1,
+      courseTitle: nextDataLesson?.courseTitle || this.extractCourseTitleFromDom(),
+      communityName: nextDataLesson?.communityName || this.extractCommunityNameFromDom(),
       descriptionHtml: descriptionText || undefined,
       media: media || undefined,
       attachments,
@@ -38,12 +42,36 @@ export class LessonScanner {
 
   static extractLessonTitle(): string {
     const heading = document.querySelector<HTMLElement>(
-      '[data-testid="lesson-title"], [class*="LessonTitle"], h1, h2, [class*="title"]'
+      '[data-testid="lesson-title"], [class*="LessonTitle"], [class*="lesson-title"], [class*="styled__Title"], h1, h2'
     );
     if (heading && heading.textContent?.trim()) {
       return heading.textContent.trim();
     }
     return document.title.replace('· Skool', '').trim() || 'Lección de Skool';
+  }
+
+  static extractModuleTitleFromDom(): string {
+    const activeModuleEl = document.querySelector<HTMLElement>(
+      '[class*="styled__Set"][class*="active"], [class*="SetItem"][class*="active"], [class*="accordion"][class*="open"], [class*="Section"] [class*="Header"]'
+    );
+    if (activeModuleEl?.textContent?.trim()) {
+      return activeModuleEl.textContent.replace(/(\d+\s*lecciones|\d+\s*lessons)/i, '').trim();
+    }
+    return 'Módulo 01';
+  }
+
+  static extractCourseTitleFromDom(): string {
+    const titleEl = document.querySelector<HTMLElement>(
+      '[data-testid="course-title"], header h1, [class*="CourseTitle"], h1'
+    );
+    return titleEl?.textContent?.trim() || document.title.replace('· Skool', '').trim() || 'Curso';
+  }
+
+  static extractCommunityNameFromDom(): string {
+    const commEl = document.querySelector<HTMLElement>(
+      '[data-testid="community-name"], nav a[href^="/"], [class*="community-name"]'
+    );
+    return commEl?.textContent?.trim() || 'Skool';
   }
 
   static extractLessonId(url: string): string {
@@ -81,30 +109,39 @@ export class LessonScanner {
       if (!nextData?.props?.pageProps) return null;
       const pp = nextData.props.pageProps;
 
+      const course = pp.currentCourse || pp.course || pp.group?.course || pp.courseData;
+      const courseTitle = course?.name || course?.title || course?.metadata?.name || pp.group?.name;
+      const communityName = pp.group?.name || pp.community?.name;
+
       // 1. Direct active lesson props
       let rawLesson = pp.currentLesson || pp.lesson || pp.activeLesson;
+      let parentModuleTitle: string | undefined;
+      let parentModuleIndex = 1;
+      let lessonIndex = 1;
 
       // 2. Search in course / modules / sets if not direct
-      if (!rawLesson) {
-        const course = pp.currentCourse || pp.course || pp.group?.course;
-        const modules = course?.modules || course?.sets || course?.children || [];
-        const lessonId = this.extractLessonId(currentUrl);
+      const modules = course?.sets || course?.modules || course?.children || course?.sections || pp.sets || pp.modules || [];
+      const lessonId = this.extractLessonId(currentUrl);
 
-        for (const mod of modules) {
-          const lessons = mod.lessons || mod.children || mod.items || [];
-          for (const l of lessons) {
-            if (l.id === lessonId || currentUrl.includes(l.id)) {
-              rawLesson = l;
-              break;
-            }
+      for (let mIdx = 0; mIdx < modules.length; mIdx++) {
+        const mod = modules[mIdx];
+        const lessons = mod.modules || mod.lessons || mod.children || mod.items || mod.nodes || [];
+        for (let lIdx = 0; lIdx < lessons.length; lIdx++) {
+          const l = lessons[lIdx];
+          if (l.id === lessonId || currentUrl.includes(l.id)) {
+            rawLesson = l;
+            parentModuleTitle = mod.name || mod.title || mod.label || mod.metadata?.name || mod.metadata?.title || mod.header;
+            parentModuleIndex = mIdx + 1;
+            lessonIndex = lIdx + 1;
+            break;
           }
-          if (rawLesson) break;
         }
+        if (rawLesson && parentModuleTitle) break;
       }
 
       if (!rawLesson) return null;
 
-      const title = rawLesson.name || rawLesson.title;
+      const title = rawLesson.name || rawLesson.title || rawLesson.label || rawLesson.metadata?.name;
       const id = rawLesson.id || this.extractLessonId(currentUrl);
 
       // Extract media
@@ -113,7 +150,9 @@ export class LessonScanner {
         mediaUrl = rawLesson.video;
       } else if (rawLesson.video) {
         const v = rawLesson.video;
+        const muxToken = v.token || v.mux_token || v.jwt ? `?token=${v.token || v.mux_token || v.jwt}` : '';
         mediaUrl =
+          v.signed_url ||
           v.hls_url ||
           v.m3u8 ||
           v.url ||
@@ -123,7 +162,9 @@ export class LessonScanner {
           v.loom_url ||
           (v.vimeo_id ? `https://player.vimeo.com/video/${v.vimeo_id}` : undefined) ||
           (v.youtube_id ? `https://www.youtube.com/watch?v=${v.youtube_id}` : undefined) ||
-          (v.mux_playback_id ? `https://stream.mux.com/${v.mux_playback_id}.m3u8` : undefined);
+          (v.mux_playback_id ? `https://stream.mux.com/${v.mux_playback_id}.m3u8${muxToken}` : undefined);
+      } else if (rawLesson.media_url || rawLesson.stream_url || rawLesson.playback_url) {
+        mediaUrl = rawLesson.media_url || rawLesson.stream_url || rawLesson.playback_url;
       }
 
       let media: MediaAsset | undefined;
@@ -157,7 +198,12 @@ export class LessonScanner {
 
       return {
         lessonId: id,
+        lessonIndex,
         lessonTitle: title,
+        moduleTitle: parentModuleTitle,
+        moduleIndex: parentModuleIndex,
+        courseTitle,
+        communityName,
         media,
         attachments,
         descriptionHtml: rawLesson.description || rawLesson.content,

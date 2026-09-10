@@ -83,16 +83,18 @@ export class CourseScanner {
       const course = pageProps.currentCourse || pageProps.course || pageProps.group?.course || pageProps.courseData;
       if (!course) return null;
 
-      const courseTitle = course.name || course.title || course.metadata?.title || this.extractCourseTitle();
+      const courseTitle = course.name || course.title || course.metadata?.name || course.metadata?.title || this.extractCourseTitle();
       const communityName = pageProps.group?.name || pageProps.community?.name || this.extractCommunityName();
 
       // Find all module/set containers in the course object
       const rawModules =
-        course.modules ||
         course.sets ||
-        course.children ||
+        course.modules ||
         course.sections ||
+        course.children ||
         course.groups ||
+        pageProps.sets ||
+        pageProps.modules ||
         [];
 
       const modules: CourseModule[] = [];
@@ -104,13 +106,16 @@ export class CourseScanner {
         const modTitle =
           m.name ||
           m.title ||
-          m.header ||
+          m.label ||
+          m.heading ||
           m.metadata?.name ||
           m.metadata?.title ||
-          m.label ||
+          m.metadata?.label ||
+          m.header ||
           `Módulo ${mIdx + 1}`;
 
         const rawLessons =
+          m.modules ||
           m.lessons ||
           m.children ||
           m.items ||
@@ -124,9 +129,11 @@ export class CourseScanner {
           const lessonTitle =
             l.name ||
             l.title ||
+            l.label ||
+            l.heading ||
             l.metadata?.name ||
             l.metadata?.title ||
-            l.label ||
+            l.metadata?.heading ||
             `Lección ${lIdx + 1}`;
 
           const lessonId = l.id || `lesson_${mIdx + 1}_${lIdx + 1}`;
@@ -139,17 +146,20 @@ export class CourseScanner {
           if (typeof l.video === 'string') {
             mediaUrl = l.video;
           } else if (l.video) {
+            const v = l.video;
+            const muxToken = v.token || v.mux_token || v.jwt ? `?token=${v.token || v.mux_token || v.jwt}` : '';
             mediaUrl =
-              l.video.hls_url ||
-              l.video.m3u8 ||
-              l.video.url ||
-              l.video.stream_url ||
-              l.video.playback_url ||
-              l.video.raw_url ||
-              l.video.loom_url ||
-              (l.video.vimeo_id ? `https://player.vimeo.com/video/${l.video.vimeo_id}` : undefined) ||
-              (l.video.youtube_id ? `https://www.youtube.com/watch?v=${l.video.youtube_id}` : undefined) ||
-              (l.video.mux_playback_id ? `https://stream.mux.com/${l.video.mux_playback_id}.m3u8` : undefined);
+              v.signed_url ||
+              v.hls_url ||
+              v.m3u8 ||
+              v.url ||
+              v.stream_url ||
+              v.playback_url ||
+              v.raw_url ||
+              v.loom_url ||
+              (v.vimeo_id ? `https://player.vimeo.com/video/${v.vimeo_id}` : undefined) ||
+              (v.youtube_id ? `https://www.youtube.com/watch?v=${v.youtube_id}` : undefined) ||
+              (v.mux_playback_id ? `https://stream.mux.com/${v.mux_playback_id}.m3u8${muxToken}` : undefined);
           } else if (l.media_url || l.stream_url || l.playback_url) {
             mediaUrl = l.media_url || l.stream_url || l.playback_url;
           }
@@ -175,6 +185,10 @@ export class CourseScanner {
             lessonIndex: lIdx + 1,
             lessonTitle,
             url: lessonUrl,
+            moduleTitle: modTitle,
+            moduleIndex: mIdx + 1,
+            courseTitle,
+            communityName,
             descriptionHtml: l.description || l.content,
             attachments,
           };
@@ -233,31 +247,31 @@ export class CourseScanner {
   static extractModulesFromDom(): CourseModule[] {
     const modules: CourseModule[] = [];
 
-    // Search for accordion/module sections
-    const moduleContainers = Array.from(
+    // Search for set/module container elements in the classroom sidebar
+    const setContainers = Array.from(
       document.querySelectorAll<HTMLElement>(
-        '[data-testid="module-item"], [class*="ModuleItem"], [class*="module-item"], [class*="set-item"], [class*="SetItem"], [class*="module-container"], [class*="accordion"], [class*="Accordion"], [class*="Section"]'
+        '[data-testid="module-item"], [data-testid*="module"], [data-testid*="set"], [class*="styled__Set"], [class*="SetContainer"], [class*="SetItem"], [class*="set-item"], [class*="ModuleItem"], [class*="module-item"], [class*="module-container"], [class*="Accordion"], [class*="Section"]'
       )
     );
 
-    if (moduleContainers.length > 0) {
-      moduleContainers.forEach((modEl, modIdx) => {
-        // Extract real module title
-        const modTitleEl = modEl.querySelector<HTMLElement>(
-          'h2, h3, h4, [class*="title"], [class*="Title"], [class*="header"], [class*="Header"], button'
+    if (setContainers.length > 0) {
+      setContainers.forEach((setEl, sIdx) => {
+        // Find title element within the set container
+        const headerEl = setEl.querySelector<HTMLElement>(
+          '[class*="SetTitle"], [class*="setTitle"], [class*="Header"], [class*="header"], [class*="title"], h2, h3, h4, button'
         );
-        let moduleTitle = modTitleEl?.textContent?.trim() || '';
-        // Clean out extra badges/numbers
-        moduleTitle = moduleTitle.replace(/\s+/g, ' ').replace(/(\d+\s*lecciones|\d+\s*lessons)/i, '').trim();
-        if (!moduleTitle) moduleTitle = `Módulo ${modIdx + 1}`;
 
-        // Find lesson links within this module
+        let moduleTitle = headerEl?.textContent?.trim() || '';
+        // Clean out extra lesson count badges like "(4)" or "4 lessons"
+        moduleTitle = moduleTitle.replace(/\s+/g, ' ').replace(/\(\s*\d+\s*\)/g, '').replace(/(\d+\s*lecciones|\d+\s*lessons)/i, '').trim();
+        if (!moduleTitle) moduleTitle = `Módulo ${sIdx + 1}`;
+
+        // Find lesson links within this set
         const lessonLinks = Array.from(
-          modEl.querySelectorAll<HTMLAnchorElement>('a[href*="/classroom/"], a[href*="?md="], [class*="lesson"] a')
+          setEl.querySelectorAll<HTMLAnchorElement>('a[href*="/classroom/"], a[href*="?md="]')
         );
 
         const lessons: CourseLesson[] = lessonLinks.map((a, lIdx) => {
-          // Get text content excluding timestamps/icons
           let title = '';
           const titleSpan = a.querySelector<HTMLElement>('span, p, div, [class*="title"]');
           if (titleSpan?.textContent?.trim()) {
@@ -265,25 +279,28 @@ export class CourseScanner {
           } else {
             title = a.textContent?.trim() || '';
           }
-          // Clean timestamp patterns like "10:30" or "1 hr"
           title = title.replace(/\b\d{1,2}:\d{2}\b/g, '').replace(/\s+/g, ' ').trim();
           if (!title) title = `Lección ${lIdx + 1}`;
 
-          const lessonId = a.href.split('?md=')[1] || a.href.split('/').pop() || `lesson_${modIdx + 1}_${lIdx + 1}`;
+          const lessonId = a.href.split('?md=')[1] || a.href.split('/').pop() || `lesson_${sIdx + 1}_${lIdx + 1}`;
 
           return {
             lessonId,
             lessonIndex: lIdx + 1,
             lessonTitle: title,
             url: a.href,
+            moduleTitle,
+            moduleIndex: sIdx + 1,
+            courseTitle: this.extractCourseTitle(),
+            communityName: this.extractCommunityName(),
             attachments: [],
           };
         });
 
         if (lessons.length > 0) {
           modules.push({
-            moduleId: `mod_${modIdx + 1}`,
-            moduleIndex: modIdx + 1,
+            moduleId: `mod_${sIdx + 1}`,
+            moduleIndex: sIdx + 1,
             moduleTitle,
             lessons,
           });
@@ -291,7 +308,7 @@ export class CourseScanner {
       });
     }
 
-    // Fallback: if no module containers matched, collect sidebar lesson links
+    // Fallback: if no set containers matched, collect all lesson links and group them
     if (modules.length === 0) {
       const allLessonLinks = Array.from(
         document.querySelectorAll<HTMLAnchorElement>('a[href*="/classroom/"], a[href*="?md="]')
@@ -308,6 +325,10 @@ export class CourseScanner {
             lessonIndex: idx + 1,
             lessonTitle: title,
             url: a.href,
+            moduleTitle: this.extractCourseTitle(),
+            moduleIndex: 1,
+            courseTitle: this.extractCourseTitle(),
+            communityName: this.extractCommunityName(),
             attachments: [],
           };
         });

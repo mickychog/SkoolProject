@@ -56,6 +56,9 @@ const observer = new MutationObserver(() => {
 });
 observer.observe(document, { subtree: true, childList: true });
 
+// Periodic check for fast React SPA router transitions
+setInterval(handleUrlChange, 350);
+
 // Listen for messages from Popup or Background
 chrome.runtime.onMessage.addListener(
   (message: ExtensionMessage, _sender, sendResponse) => {
@@ -103,7 +106,8 @@ chrome.runtime.onMessage.addListener(
 
       case 'TAB_FETCH_BLOB': {
         const { url } = message.payload;
-        fetch(url, { credentials: 'include' })
+        const isSameOrigin = url.startsWith(window.location.origin) || url.includes('skool.com');
+        fetch(url, isSameOrigin ? { credentials: 'include' } : { mode: 'cors' })
           .then(async (res) => {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const blob = await res.blob();

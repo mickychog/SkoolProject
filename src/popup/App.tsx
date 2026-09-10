@@ -107,15 +107,91 @@ export default function App() {
           try {
             response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_ACTIVE_LESSON' });
           } catch {
-            // Auto-recovery: inject content script if tab was opened before extension reload
+            // Direct In-Page Execution Fallback: bypass disconnected content script without needing F5
             try {
               if (chrome.scripting?.executeScript) {
-                await chrome.scripting.executeScript({
+                const results = await chrome.scripting.executeScript({
                   target: { tabId: tab.id },
-                  files: ['src/content/index.ts'],
+                  func: () => {
+                    let nextData: any = null;
+                    const script = document.getElementById('__NEXT_DATA__');
+                    if (script && script.textContent) {
+                      try { nextData = JSON.parse(script.textContent); } catch {}
+                    }
+                    const pp = nextData?.props?.pageProps;
+                    const course = pp?.currentCourse || pp?.course || pp?.group?.course || pp?.courseData;
+                    const courseTitle = course?.name || course?.title || document.title.replace('· Skool', '').trim() || 'Curso';
+                    const communityName = pp?.group?.name || pp?.community?.name || 'Skool';
+
+                    const currentUrl = window.location.href;
+                    const urlObj = new URL(currentUrl);
+                    const mdParam = urlObj.searchParams.get('md');
+                    const lessonId = mdParam || urlObj.pathname.split('/').filter(Boolean).pop() || 'lesson_active';
+
+                    let rawLesson = pp?.currentLesson || pp?.lesson || pp?.activeLesson;
+                    let parentModTitle = 'Módulo 01';
+                    let parentModIdx = 1;
+                    let lessonIdx = 1;
+
+                    const sets = course?.sets || course?.modules || course?.children || pp?.sets || pp?.modules || [];
+                    for (let sIdx = 0; sIdx < sets.length; sIdx++) {
+                      const set = sets[sIdx];
+                      const lessons = set.modules || set.lessons || set.children || set.items || [];
+                      for (let lIdx = 0; lIdx < lessons.length; lIdx++) {
+                        const l = lessons[lIdx];
+                        if (l.id === lessonId || currentUrl.includes(l.id)) {
+                          rawLesson = l;
+                          parentModTitle = set.name || set.title || set.label || `Módulo ${sIdx + 1}`;
+                          parentModIdx = sIdx + 1;
+                          lessonIdx = lIdx + 1;
+                          break;
+                        }
+                      }
+                      if (rawLesson && parentModTitle !== 'Módulo 01') break;
+                    }
+
+                    const heading = document.querySelector('[data-testid="lesson-title"], [class*="LessonTitle"], h1, h2');
+                    const lessonTitle = rawLesson?.name || rawLesson?.title || heading?.textContent?.trim() || document.title.replace('· Skool', '').trim() || 'Lección';
+
+                    let mediaUrl: string | undefined;
+                    if (typeof rawLesson?.video === 'string') mediaUrl = rawLesson.video;
+                    else if (rawLesson?.video) {
+                      const v = rawLesson.video;
+                      const tok = v.token || v.mux_token || v.jwt ? `?token=${v.token || v.mux_token || v.jwt}` : '';
+                      mediaUrl = v.signed_url || v.hls_url || v.m3u8 || v.url || v.stream_url || v.playback_url || v.raw_url || v.loom_url || (v.mux_playback_id ? `https://stream.mux.com/${v.mux_playback_id}.m3u8${tok}` : undefined);
+                    }
+
+                    // DOM Media detection if not found
+                    if (!mediaUrl) {
+                      const videoEl = document.querySelector('video');
+                      if (videoEl?.src && !videoEl.src.startsWith('blob:')) mediaUrl = videoEl.src;
+                      else if (videoEl?.currentSrc && !videoEl.currentSrc.startsWith('blob:')) mediaUrl = videoEl.currentSrc;
+                    }
+
+                    const rawAtts = rawLesson?.attachments || rawLesson?.files || [];
+                    const attachments = rawAtts.map((att: any, i: number) => ({
+                      id: att.id || `att_${i}`,
+                      fileName: att.name || att.fileName || `adjunto_${i + 1}.pdf`,
+                      downloadUrl: att.url || att.download_url || '',
+                      fileExtension: (att.name || '').split('.').pop() || 'pdf',
+                    })).filter((a: any) => Boolean(a.downloadUrl));
+
+                    return {
+                      lessonId,
+                      lessonIndex: lessonIdx,
+                      lessonTitle,
+                      moduleTitle: parentModTitle,
+                      moduleIndex: parentModIdx,
+                      courseTitle,
+                      communityName,
+                      media: mediaUrl ? { provider: 'skool_native', sourceUrl: mediaUrl, qualities: [{ qualityLabel: 'Original', streamUrl: mediaUrl, isHLS: mediaUrl.includes('.m3u8') }] } : undefined,
+                      attachments,
+                    };
+                  },
                 });
-                await new Promise((r) => setTimeout(r, 120));
-                response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_ACTIVE_LESSON' });
+                if (results?.[0]?.result) {
+                  response = { type: 'LESSON_SCANNED_SUCCESS', payload: results[0].result };
+                }
               }
             } catch {
               // Ignore
@@ -137,6 +213,10 @@ export default function App() {
           lessonId: 'lesson_intro',
           lessonIndex: 1,
           lessonTitle: '01. Introducción al Desarrollo con Skool',
+          moduleTitle: 'Módulo 1: Fundamentos y Setup',
+          moduleIndex: 1,
+          courseTitle: 'Desarrollo Avanzado de Aplicaciones Web',
+          communityName: 'Devs Hispanos',
           url: 'https://www.skool.com/community/classroom/course-1?md=lesson_intro',
           descriptionHtml: 'Lección introductoria con conceptos clave y diagrama de arquitectura.',
           media: {
@@ -170,15 +250,124 @@ export default function App() {
           try {
             response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_FULL_COURSE' });
           } catch {
-            // Auto-recovery: inject content script if tab was opened before extension reload
+            // Direct In-Page Execution Fallback for Full Course
             try {
               if (chrome.scripting?.executeScript) {
-                await chrome.scripting.executeScript({
+                const results = await chrome.scripting.executeScript({
                   target: { tabId: tab.id },
-                  files: ['src/content/index.ts'],
+                  func: () => {
+                    let nextData: any = null;
+                    const script = document.getElementById('__NEXT_DATA__');
+                    if (script && script.textContent) {
+                      try { nextData = JSON.parse(script.textContent); } catch {}
+                    }
+                    const pp = nextData?.props?.pageProps;
+                    const course = pp?.currentCourse || pp?.course || pp?.group?.course || pp?.courseData;
+                    const courseTitle = course?.name || course?.title || document.title.replace('· Skool', '').trim() || 'Curso';
+                    const communityName = pp?.group?.name || pp?.community?.name || 'Skool';
+
+                    const rawSets = course?.sets || course?.modules || course?.sections || pp?.sets || pp?.modules || [];
+                    const modules: any[] = [];
+                    let totalLessons = 0;
+                    let totalVideos = 0;
+                    let totalAttachments = 0;
+
+                    rawSets.forEach((set: any, sIdx: number) => {
+                      const modTitle = set.name || set.title || set.label || set.metadata?.name || `Módulo ${sIdx + 1}`;
+                      const rawLessons = set.modules || set.lessons || set.children || set.items || [];
+                      const lessons: any[] = [];
+
+                      rawLessons.forEach((l: any, lIdx: number) => {
+                        const lessonTitle = l.name || l.title || l.label || `Lección ${lIdx + 1}`;
+                        const lessonId = l.id || `l_${sIdx + 1}_${lIdx + 1}`;
+                        const lessonUrl = l.url || `${window.location.origin}/classroom/${course?.id || 'c'}?md=${l.id || ''}`;
+
+                        let mediaUrl: string | undefined;
+                        if (typeof l.video === 'string') mediaUrl = l.video;
+                        else if (l.video) {
+                          const v = l.video;
+                          const tok = v.token || v.mux_token || v.jwt ? `?token=${v.token || v.mux_token || v.jwt}` : '';
+                          mediaUrl = v.signed_url || v.hls_url || v.m3u8 || v.url || v.stream_url || (v.mux_playback_id ? `https://stream.mux.com/${v.mux_playback_id}.m3u8${tok}` : undefined);
+                        }
+
+                        const rawAtts = l.attachments || l.files || [];
+                        const attachments = rawAtts.map((att: any, i: number) => ({
+                          id: att.id || `att_${i}`,
+                          fileName: att.name || att.fileName || `adjunto_${i + 1}.pdf`,
+                          downloadUrl: att.url || att.download_url || '',
+                          fileExtension: (att.name || '').split('.').pop() || 'pdf',
+                        })).filter((a: any) => Boolean(a.downloadUrl));
+
+                        const lessonObj = {
+                          lessonId,
+                          lessonIndex: lIdx + 1,
+                          lessonTitle,
+                          url: lessonUrl,
+                          moduleTitle: modTitle,
+                          moduleIndex: sIdx + 1,
+                          courseTitle,
+                          communityName,
+                          attachments,
+                          media: mediaUrl ? { provider: 'skool_native', sourceUrl: mediaUrl, qualities: [{ qualityLabel: 'Original', streamUrl: mediaUrl, isHLS: mediaUrl.includes('.m3u8') }] } : undefined,
+                        };
+
+                        if (mediaUrl) totalVideos++;
+                        totalAttachments += attachments.length;
+                        totalLessons++;
+                        lessons.push(lessonObj);
+                      });
+
+                      modules.push({
+                        moduleId: set.id || `mod_${sIdx + 1}`,
+                        moduleIndex: sIdx + 1,
+                        moduleTitle: modTitle,
+                        lessons,
+                      });
+                    });
+
+                    // DOM Fallback if nextData was empty
+                    if (modules.length === 0) {
+                      const setContainers = Array.from(document.querySelectorAll('[class*="styled__Set"], [class*="SetContainer"], [class*="SetItem"], [class*="Section"]'));
+                      setContainers.forEach((setEl, sIdx) => {
+                        const h = setEl.querySelector('[class*="SetTitle"], [class*="Header"], h2, h3, h4, button');
+                        let modTitle = h?.textContent?.trim() || `Módulo ${sIdx + 1}`;
+                        modTitle = modTitle.replace(/(\d+\s*lecciones|\d+\s*lessons|\(\s*\d+\s*\))/i, '').trim();
+
+                        const links = Array.from(setEl.querySelectorAll('a[href*="/classroom/"], a[href*="?md="]'));
+                        const lessons = links.map((a: any, lIdx: number) => ({
+                          lessonId: a.href.split('?md=')[1] || `l_${sIdx + 1}_${lIdx + 1}`,
+                          lessonIndex: lIdx + 1,
+                          lessonTitle: a.textContent?.replace(/\b\d{1,2}:\d{2}\b/g, '').trim() || `Lección ${lIdx + 1}`,
+                          url: a.href,
+                          moduleTitle: modTitle,
+                          moduleIndex: sIdx + 1,
+                          courseTitle,
+                          communityName,
+                          attachments: [],
+                        }));
+
+                        if (lessons.length > 0) {
+                          modules.push({ moduleId: `mod_${sIdx + 1}`, moduleIndex: sIdx + 1, moduleTitle: modTitle, lessons });
+                          totalLessons += lessons.length;
+                        }
+                      });
+                    }
+
+                    return {
+                      courseId: course?.id || `course_${Date.now()}`,
+                      courseTitle,
+                      communityName,
+                      modules,
+                      scannedAt: Date.now(),
+                      totalLessons,
+                      totalVideos,
+                      totalAttachments,
+                    };
+                  },
                 });
-                await new Promise((r) => setTimeout(r, 120));
-                response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_FULL_COURSE' });
+                if (results?.[0]?.result) {
+                  response = { type: 'COURSE_SCANNED_SUCCESS', payload: results[0].result };
+                }
               }
             } catch {
               // Ignore
@@ -348,15 +537,17 @@ export default function App() {
 
       const tasks: any[] = [];
       const mediaSource = lesson.media?.sourceUrl;
-      const communityName = 'Skool';
-      const courseTitle = document.title.replace('· Skool', '').trim() || 'Curso';
+      const communityName = lesson.communityName || 'Skool';
+      const courseTitle = lesson.courseTitle || 'Curso';
+      const moduleTitle = lesson.moduleTitle || 'Módulo 01';
+      const moduleIndex = lesson.moduleIndex || 1;
 
       if (mediaSource) {
         const targetPath = buildDownloadPath({
           communityName,
           courseTitle,
-          moduleIndex: 1,
-          moduleTitle: 'Module 01',
+          moduleIndex,
+          moduleTitle,
           lessonIndex: lesson.lessonIndex,
           lessonTitle: lesson.lessonTitle,
           extension: '.mp4',
@@ -367,8 +558,8 @@ export default function App() {
 
         tasks.push({
           courseTitle,
-          moduleTitle: 'Module 01',
-          moduleIndex: 1,
+          moduleTitle,
+          moduleIndex,
           lessonTitle: lesson.lessonTitle,
           lessonIndex: lesson.lessonIndex,
           assetType: 'video',
@@ -384,8 +575,8 @@ export default function App() {
         const targetPath = buildDownloadPath({
           communityName,
           courseTitle,
-          moduleIndex: 1,
-          moduleTitle: 'Module 01',
+          moduleIndex,
+          moduleTitle,
           lessonIndex: lesson.lessonIndex,
           lessonTitle: lesson.lessonTitle,
           assetTitle: att.fileName.replace(/\.[^/.]+$/, ''),
@@ -397,8 +588,8 @@ export default function App() {
 
         tasks.push({
           courseTitle,
-          moduleTitle: 'Module 01',
-          moduleIndex: 1,
+          moduleTitle,
+          moduleIndex,
           lessonTitle: lesson.lessonTitle,
           lessonIndex: lesson.lessonIndex,
           assetType: 'attachment',

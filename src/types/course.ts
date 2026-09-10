@@ -42,6 +42,10 @@ export interface CourseLesson {
   lessonIndex: number;
   lessonTitle: string;
   url: string;
+  moduleTitle?: string;
+  moduleIndex?: number;
+  courseTitle?: string;
+  communityName?: string;
   descriptionHtml?: string;
   media?: MediaAsset;
   attachments: ResourceAttachment[];
