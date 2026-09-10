@@ -189,6 +189,7 @@ export class QueueManager {
         matchingTask.completedAt = Date.now();
         this.state.activeTaskIds = this.state.activeTaskIds.filter((id) => id !== matchingTask.id);
         this.saveState();
+        this.notifyIfAllCompleted();
         this.processNext();
       } else if (delta.state.current === 'interrupted') {
         matchingTask.status = 'failed';
@@ -270,6 +271,23 @@ export class QueueManager {
     );
     if (!hasActiveHls) {
       await OffscreenManager.closeDocument().catch(() => {});
+    }
+  }
+
+  private notifyIfAllCompleted(): void {
+    const total = Object.keys(this.state.tasks).length;
+    const remaining = Object.values(this.state.tasks).filter(
+      (t) => t.status === 'queued' || t.status === 'downloading' || t.status === 'processing'
+    ).length;
+
+    if (total > 0 && remaining === 0) {
+      chrome.notifications?.create({
+        type: 'basic',
+        iconUrl: 'assets/icon.png',
+        title: '🎉 Descarga Completada',
+        message: `Todas las ${total} descargas de Skool han finalizado con éxito.`,
+        priority: 2,
+      });
     }
   }
 

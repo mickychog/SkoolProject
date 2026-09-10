@@ -7,7 +7,8 @@
     "activeTab",
     "storage",
     "downloads",
-    "offscreen"
+    "offscreen",
+    "notifications"
   ],
   "host_permissions": [
     "https://www.skool.com/*"
