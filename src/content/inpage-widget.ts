@@ -61,15 +61,17 @@ export class InPageWidget {
         }
 
         const tasks: any[] = [];
-        const communityName = 'Skool';
-        const courseTitle = document.title.replace('· Skool', '').trim() || 'Curso';
+        const communityName = lesson.communityName || 'Skool';
+        const courseTitle = lesson.courseTitle || 'Curso';
+        const moduleTitle = lesson.moduleTitle || 'Módulo 01';
+        const moduleIndex = lesson.moduleIndex || 1;
 
         if (lesson.media?.sourceUrl) {
           const path = buildDownloadPath({
             communityName,
             courseTitle,
-            moduleIndex: 1,
-            moduleTitle: 'Module 01',
+            moduleIndex,
+            moduleTitle,
             lessonIndex: lesson.lessonIndex,
             lessonTitle: lesson.lessonTitle,
             extension: '.mp4',
@@ -78,8 +80,8 @@ export class InPageWidget {
           const fileName = parts.pop()!;
           tasks.push({
             courseTitle,
-            moduleTitle: 'Module 01',
-            moduleIndex: 1,
+            moduleTitle,
+            moduleIndex,
             lessonTitle: lesson.lessonTitle,
             lessonIndex: lesson.lessonIndex,
             assetType: 'video',
@@ -94,8 +96,8 @@ export class InPageWidget {
           const path = buildDownloadPath({
             communityName,
             courseTitle,
-            moduleIndex: 1,
-            moduleTitle: 'Module 01',
+            moduleIndex,
+            moduleTitle,
             lessonIndex: lesson.lessonIndex,
             lessonTitle: lesson.lessonTitle,
             assetTitle: att.fileName.replace(/\.[^/.]+$/, ''),
@@ -105,8 +107,8 @@ export class InPageWidget {
           const fileName = parts.pop()!;
           tasks.push({
             courseTitle,
-            moduleTitle: 'Module 01',
-            moduleIndex: 1,
+            moduleTitle,
+            moduleIndex,
             lessonTitle: lesson.lessonTitle,
             lessonIndex: lesson.lessonIndex,
             assetType: 'attachment',
@@ -130,10 +132,11 @@ export class InPageWidget {
 
         container.innerHTML = `<span style="color:#34d399;">✓ ¡${tasks.length} en cola!</span>`;
         setTimeout(() => InPageWidget.resetButton(container), 3000);
-      } catch (err) {
+      } catch (err: unknown) {
         console.error('[Skool Downloader] InPageWidget error:', err);
-        container.innerHTML = `<span style="color:#f87171;">❌ Error al encolar</span>`;
-        setTimeout(() => InPageWidget.resetButton(container), 2500);
+        const isContextInvalid = err instanceof Error && err.message.includes('Extension context invalidated');
+        container.innerHTML = `<span style="color:#f87171;">${isContextInvalid ? '🔄 Abre desde el icono' : '❌ Error al encolar'}</span>`;
+        setTimeout(() => InPageWidget.resetButton(container), 3000);
       }
     };
 

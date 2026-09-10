@@ -80,7 +80,47 @@ export class CourseScanner {
       if (!data || !data.props?.pageProps) return null;
 
       const pageProps = data.props.pageProps;
-      const course = pageProps.currentCourse || pageProps.course || pageProps.group?.course || pageProps.courseData;
+
+      const findCourseObject = (root: any): any => {
+        if (!root || typeof root !== 'object') return null;
+        if (root.sets && Array.isArray(root.sets) && root.sets.length > 0) return root;
+        if (root.modules && Array.isArray(root.modules) && root.modules.length > 0 && root.name) return root;
+        if (root.currentCourse) {
+          const c = findCourseObject(root.currentCourse);
+          if (c) return c;
+        }
+        if (root.course) {
+          const c = findCourseObject(root.course);
+          if (c) return c;
+        }
+        if (root.courseData) {
+          const c = findCourseObject(root.courseData);
+          if (c) return c;
+        }
+        if (root.group?.course) {
+          const c = findCourseObject(root.group.course);
+          if (c) return c;
+        }
+
+        // Check React Query dehydrated state
+        if (root.dehydratedState?.queries && Array.isArray(root.dehydratedState.queries)) {
+          for (const q of root.dehydratedState.queries) {
+            const found = findCourseObject(q?.state?.data);
+            if (found) return found;
+          }
+        }
+
+        // Check child keys
+        for (const key of Object.keys(root)) {
+          if (key === 'course' || key === 'currentCourse' || key === 'classroom' || key === 'group') {
+            const found = findCourseObject(root[key]);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+
+      const course = findCourseObject(pageProps) || pageProps.currentCourse || pageProps.course || pageProps.group?.course || pageProps.courseData;
       if (!course) return null;
 
       const courseTitle = course.name || course.title || course.metadata?.name || course.metadata?.title || this.extractCourseTitle();
