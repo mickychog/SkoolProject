@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Download,
   FolderTree,
@@ -34,6 +34,65 @@ export default function App() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string>('');
 
+  const fetchQueueState = useCallback(async () => {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'QUEUE_GET_STATE' });
+      if (response?.payload) {
+        setQueueState(response.payload);
+      }
+    } catch {
+      // Background worker might be starting, safe to ignore
+    }
+  }, []);
+
+  const fetchActiveLesson = useCallback(async () => {
+    setIsLoading(true);
+    setStatusMessage('Escaneando lección en pestaña activa...');
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tab = tabs[0];
+      if (tab?.id && tab.url?.includes('skool.com')) {
+        const response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_ACTIVE_LESSON' });
+        if (response?.type === 'LESSON_SCANNED_SUCCESS') {
+          setActiveLesson(response.payload);
+          setStatusMessage('');
+        } else {
+          setStatusMessage(response?.payload?.message || 'Abre una lección de Skool para detectarla.');
+        }
+      } else {
+        setStatusMessage('Navega a una lección de Skool en la pestaña activa.');
+      }
+    } catch {
+      setStatusMessage('Navega a una lección de Skool y presiona Reescanear.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  const fetchFullCourse = useCallback(async () => {
+    setIsLoading(true);
+    setStatusMessage('Escaneando estructura del aula virtual...');
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tab = tabs[0];
+      if (tab?.id && tab.url?.includes('skool.com')) {
+        const response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_FULL_COURSE' });
+        if (response?.type === 'COURSE_SCANNED_SUCCESS') {
+          setCourseData(response.payload);
+          setStatusMessage('');
+        } else {
+          setStatusMessage(response?.payload?.message || 'Abre el aula virtual (Classroom) en Skool.');
+        }
+      } else {
+        setStatusMessage('Abre una comunidad de Skool en la pestaña activa.');
+      }
+    } catch {
+      setStatusMessage('Error al conectar con la página. Recarga la pestaña de Skool.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchActiveLesson();
     fetchQueueState();
@@ -43,106 +102,31 @@ export default function App() {
         setQueueState(message.payload);
       }
     };
-    chrome.runtime?.onMessage?.addListener(messageListener);
+    chrome.runtime.onMessage.addListener(messageListener);
     return () => {
-      chrome.runtime?.onMessage?.removeListener(messageListener);
+      chrome.runtime.onMessage.removeListener(messageListener);
     };
-  }, []);
+  }, [fetchActiveLesson, fetchQueueState]);
 
-  const fetchActiveLesson = async () => {
-    setIsLoading(true);
-    setStatusMessage('Escaneando lección en pestaña activa...');
-    try {
-      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      const tab = tabs[0];
-      if (tab?.id) {
-        chrome.tabs.sendMessage(tab.id, { type: 'SCAN_ACTIVE_LESSON' }, (response) => {
-          if (chrome.runtime.lastError) {
-            setStatusMessage('Abre una lección de Skool para detectarla.');
-            setIsLoading(false);
-            return;
-          }
-          if (response?.type === 'LESSON_SCANNED_SUCCESS') {
-            setActiveLesson(response.payload);
-            setStatusMessage('');
-          } else {
-            setStatusMessage(response?.payload?.message || 'Abre una lección de Skool.');
-          }
-          setIsLoading(false);
-        });
-      } else {
-        setStatusMessage('No se detectó una pestaña activa.');
-        setIsLoading(false);
-      }
-    } catch {
-      setStatusMessage('Extensión lista. Navega a una lección de Skool.');
-      setIsLoading(false);
-    }
-  };
-
-  const fetchFullCourse = async () => {
-    setIsLoading(true);
-    setStatusMessage('Escaneando estructura del aula virtual...');
-    try {
-      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      const tab = tabs[0];
-      if (tab?.id) {
-        chrome.tabs.sendMessage(tab.id, { type: 'SCAN_FULL_COURSE' }, (response) => {
-          if (chrome.runtime.lastError) {
-            setStatusMessage('Abre el aula virtual (Classroom) en Skool para escanear.');
-            setIsLoading(false);
-            return;
-          }
-          if (response?.type === 'COURSE_SCANNED_SUCCESS') {
-            setCourseData(response.payload);
-            setStatusMessage('');
-          } else {
-            setStatusMessage(response?.payload?.message || 'No se pudo leer la estructura del curso.');
-          }
-          setIsLoading(false);
-        });
-      } else {
-        setStatusMessage('No se detectó pestaña de Skool.');
-        setIsLoading(false);
-      }
-    } catch {
-      setStatusMessage('Error al conectar con la pestaña activa.');
-      setIsLoading(false);
-    }
-  };
-
-  const fetchQueueState = () => {
-    chrome.runtime?.sendMessage?.({ type: 'QUEUE_GET_STATE' }, (response) => {
-      if (chrome.runtime.lastError) {
-        return;
-      }
-      if (response?.payload) {
-        setQueueState(response.payload);
-      }
-    });
-  };
-
-  const handleDownloadActiveLesson = () => {
+  const handleDownloadActiveLesson = async () => {
     if (!activeLesson) return;
 
     const tasks: any[] = [];
-    const videoUrl = activeLesson.media?.sourceUrl || activeLesson.url;
+    if (activeLesson.media) {
+      tasks.push({
+        courseTitle: 'Skool Course',
+        moduleTitle: 'Module 01',
+        moduleIndex: 1,
+        lessonTitle: activeLesson.lessonTitle,
+        lessonIndex: activeLesson.lessonIndex,
+        assetType: 'video',
+        title: `${activeLesson.lessonTitle} (Video)`,
+        sourceUrl: activeLesson.media.sourceUrl,
+        suggestedFileName: `${activeLesson.lessonTitle}.mp4`,
+        targetFolder: 'Skool/Course/01_Module/',
+      });
+    }
 
-    // Enqueue video task
-    tasks.push({
-      courseTitle: 'Skool Course',
-      moduleTitle: 'Module 01',
-      moduleIndex: 1,
-      lessonTitle: activeLesson.lessonTitle,
-      lessonIndex: activeLesson.lessonIndex,
-      assetType: 'video',
-      title: `${activeLesson.lessonTitle} (Video)`,
-      sourceUrl: videoUrl,
-      suggestedFileName: `${activeLesson.lessonTitle}.mp4`,
-      targetFolder: 'Skool/Course/01_Module/',
-    });
-
-    // Enqueue attachments
     activeLesson.attachments.forEach((att) => {
       tasks.push({
         courseTitle: 'Skool Course',
@@ -158,53 +142,53 @@ export default function App() {
       });
     });
 
-    handleEnqueueTasks(tasks);
+    await handleEnqueueTasks(tasks);
   };
 
-  const handleEnqueueTasks = (tasks: any[]) => {
+  const handleEnqueueTasks = async (tasks: any[]) => {
     if (!tasks || tasks.length === 0) return;
 
-    chrome.runtime.sendMessage(
-      {
+    try {
+      await chrome.runtime.sendMessage({
         type: 'QUEUE_ADD_TASKS',
         payload: { tasks },
-      },
-      () => {
-        if (chrome.runtime.lastError) {
-          // ignore or retry
-        }
-        fetchQueueState();
-        setActiveTab('queue');
-      }
-    );
+      });
+    } catch {
+      // Ignore
+    }
+    await fetchQueueState();
+    setActiveTab('queue');
   };
 
-  const handleCancelTask = (taskId: string) => {
-    chrome.runtime.sendMessage(
-      {
+  const handleCancelTask = async (taskId: string) => {
+    try {
+      await chrome.runtime.sendMessage({
         type: 'QUEUE_CANCEL_TASK',
         payload: { taskId },
-      },
-      () => {
-        if (chrome.runtime.lastError) return;
-        fetchQueueState();
-      }
-    );
+      });
+    } catch {
+      // Ignore
+    }
+    await fetchQueueState();
   };
 
-  const togglePauseQueue = () => {
+  const togglePauseQueue = async () => {
     const action = queueState.isPaused ? 'QUEUE_RESUME' : 'QUEUE_PAUSE';
-    chrome.runtime.sendMessage({ type: action }, () => {
-      if (chrome.runtime.lastError) return;
-      fetchQueueState();
-    });
+    try {
+      await chrome.runtime.sendMessage({ type: action });
+    } catch {
+      // Ignore
+    }
+    await fetchQueueState();
   };
 
-  const clearCompleted = () => {
-    chrome.runtime.sendMessage({ type: 'QUEUE_CLEAR_COMPLETED' }, () => {
-      if (chrome.runtime.lastError) return;
-      fetchQueueState();
-    });
+  const clearCompleted = async () => {
+    try {
+      await chrome.runtime.sendMessage({ type: 'QUEUE_CLEAR_COMPLETED' });
+    } catch {
+      // Ignore
+    }
+    await fetchQueueState();
   };
 
   const taskList = Object.values(queueState.tasks || {});
@@ -410,7 +394,7 @@ export default function App() {
                   <div style={{ display: 'flex', gap: '12px', fontSize: '12px', color: '#94a3b8' }}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                       <Video size={13} color="#60a5fa" />
-                      {activeLesson.media ? '1 Video HD' : '1 Video / Lección'}
+                      {activeLesson.media ? '1 Video HD' : 'Sin video detectado'}
                     </span>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                       <FileText size={13} color="#34d399" />

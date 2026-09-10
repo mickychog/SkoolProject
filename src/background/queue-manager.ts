@@ -227,24 +227,57 @@ export class QueueManager {
 
         try {
           const resolvedStream = await this.resolveLessonPageStream(task.sourceUrl);
-          if (resolvedStream) {
+          if (resolvedStream && !resolvedStream.includes('/classroom/')) {
             task.sourceUrl = resolvedStream;
           } else {
-            // Lesson has text only or no video found
-            task.status = 'completed';
-            task.progressPercent = 100;
-            task.completedAt = Date.now();
-            this.state.activeTaskIds = this.state.activeTaskIds.filter((id) => id !== task.id);
-            this.saveState();
-            this.processNext();
-            continue;
+            // Check if there is an active tab on Skool that can scan it directly
+            const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+            const tab = tabs[0];
+            let activeLessonMediaUrl: string | null = null;
+            if (tab?.id && tab.url?.includes('/classroom/')) {
+              try {
+                const response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_ACTIVE_LESSON' });
+                if (response?.type === 'LESSON_SCANNED_SUCCESS' && response.payload?.media?.sourceUrl) {
+                  activeLessonMediaUrl = response.payload.media.sourceUrl;
+                }
+              } catch {
+                // Ignore
+              }
+            }
+
+            if (activeLessonMediaUrl) {
+              task.sourceUrl = activeLessonMediaUrl;
+            } else {
+              // Mark cleanly as failed or completed text-only lesson (NEVER call chrome.downloads on a webpage)
+              task.status = 'failed';
+              task.error = 'No se encontró stream de video reproducible en esta lección.';
+              this.state.activeTaskIds = this.state.activeTaskIds.filter((id) => id !== task.id);
+              this.saveState();
+              this.processNext();
+              continue;
+            }
           }
         } catch {
-          // If fetch fails, proceed with original URL
+          task.status = 'failed';
+          task.error = 'No se pudo resolver el reproductor de video de la lección.';
+          this.state.activeTaskIds = this.state.activeTaskIds.filter((id) => id !== task.id);
+          this.saveState();
+          this.processNext();
+          continue;
         }
       }
 
-      // 2. Check if it is an HLS stream
+      // 2. Guard: NEVER pass a Skool webpage URL directly to chrome.downloads
+      if (task.sourceUrl.includes('skool.com') && task.sourceUrl.includes('/classroom/')) {
+        task.status = 'failed';
+        task.error = 'URL de página no descargable directamente.';
+        this.state.activeTaskIds = this.state.activeTaskIds.filter((id) => id !== task.id);
+        this.saveState();
+        this.processNext();
+        continue;
+      }
+
+      // 3. Check if it is an HLS stream (.m3u8)
       if (task.sourceUrl.includes('.m3u8')) {
         task.status = 'processing';
         this.saveState();
@@ -266,7 +299,7 @@ export class QueueManager {
           this.saveState();
         }
       } else {
-        // Direct download (PDFs, normal MP4 links)
+        // 4. Direct download (PDFs, normal MP4 links, direct CDN streams)
         task.status = 'downloading';
         this.saveState();
 
