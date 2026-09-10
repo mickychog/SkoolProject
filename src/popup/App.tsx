@@ -37,9 +37,58 @@ export default function App() {
 
   const fetchQueueState = useCallback(async () => {
     try {
-      const response = await chrome.runtime.sendMessage({ type: 'QUEUE_GET_STATE' });
-      if (response?.payload) {
-        setQueueState(response.payload);
+      if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        const response = await chrome.runtime.sendMessage({ type: 'QUEUE_GET_STATE' });
+        if (response?.payload) {
+          setQueueState(response.payload);
+        }
+      } else {
+        // Mock data for preview when tested in browser outside extension
+        setQueueState({
+          tasks: {
+            task_1: {
+              id: 'task_1',
+              courseTitle: 'Masterclass Skool Pro',
+              moduleTitle: '01. Fundamentos y Arquitectura',
+              moduleIndex: 1,
+              lessonTitle: '01. Bienvenida al Curso',
+              lessonIndex: 1,
+              assetType: 'video',
+              title: '01. Bienvenida al Curso (Video HD)',
+              sourceUrl: 'https://stream.mux.com/sample.m3u8',
+              suggestedFileName: '01_Bienvenida.mp4',
+              targetFolder: 'Skool/Masterclass/01_Fundamentos/',
+              status: 'downloading',
+              progressPercent: 68,
+              bytesDownloaded: 14500000,
+              totalBytes: 21000000,
+              retryCount: 0,
+              createdAt: Date.now() - 5000,
+            },
+            task_2: {
+              id: 'task_2',
+              courseTitle: 'Masterclass Skool Pro',
+              moduleTitle: '01. Fundamentos y Arquitectura',
+              moduleIndex: 1,
+              lessonTitle: '02. Recursos y Plantillas',
+              lessonIndex: 2,
+              assetType: 'attachment',
+              title: 'Guia_Estudio_Oficial.pdf',
+              sourceUrl: 'https://s3.amazonaws.com/files/Guia.pdf',
+              suggestedFileName: 'Guia_Estudio_Oficial.pdf',
+              targetFolder: 'Skool/Masterclass/01_Fundamentos/',
+              status: 'queued',
+              progressPercent: 0,
+              bytesDownloaded: 0,
+              retryCount: 0,
+              createdAt: Date.now() - 2000,
+            },
+          },
+          activeTaskIds: ['task_1'],
+          isPaused: false,
+          maxConcurrent: 2,
+          defaultQuality: '1080p',
+        });
       }
     } catch {
       // Safe fallback
@@ -50,34 +99,57 @@ export default function App() {
     setIsLoading(true);
     setStatusMessage('Escaneando lección en pestaña activa...');
     try {
-      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      const tab = tabs[0];
-      if (tab?.id && tab.url?.includes('skool.com')) {
-        let response: any = null;
-        try {
-          response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_ACTIVE_LESSON' });
-        } catch {
-          // Auto-recovery: inject content script if tab was opened before extension reload
+      if (typeof chrome !== 'undefined' && chrome.tabs?.query) {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        const tab = tabs[0];
+        if (tab?.id && tab.url?.includes('skool.com')) {
+          let response: any = null;
           try {
-            await chrome.scripting.executeScript({
-              target: { tabId: tab.id },
-              files: ['src/content/index.ts'],
-            });
-            await new Promise((r) => setTimeout(r, 120));
             response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_ACTIVE_LESSON' });
           } catch {
-            // Ignore
+            // Auto-recovery: inject content script if tab was opened before extension reload
+            try {
+              if (chrome.scripting?.executeScript) {
+                await chrome.scripting.executeScript({
+                  target: { tabId: tab.id },
+                  files: ['src/content/index.ts'],
+                });
+                await new Promise((r) => setTimeout(r, 120));
+                response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_ACTIVE_LESSON' });
+              }
+            } catch {
+              // Ignore
+            }
           }
-        }
 
-        if (response?.type === 'LESSON_SCANNED_SUCCESS' && response.payload) {
-          setActiveLesson(response.payload);
-          setStatusMessage('');
+          if (response?.type === 'LESSON_SCANNED_SUCCESS' && response.payload) {
+            setActiveLesson(response.payload);
+            setStatusMessage('');
+          } else {
+            setStatusMessage(response?.payload?.message || 'Abre una lección de Skool para detectarla.');
+          }
         } else {
-          setStatusMessage(response?.payload?.message || 'Abre una lección de Skool para detectarla.');
+          setStatusMessage('Navega a una lección de Skool en la pestaña activa.');
         }
       } else {
-        setStatusMessage('Navega a una lección de Skool en la pestaña activa.');
+        // Mock data when rendered in standard web browser preview
+        setActiveLesson({
+          lessonId: 'lesson_intro',
+          lessonIndex: 1,
+          lessonTitle: '01. Introducción al Desarrollo con Skool',
+          url: 'https://www.skool.com/community/classroom/course-1?md=lesson_intro',
+          descriptionHtml: 'Lección introductoria con conceptos clave y diagrama de arquitectura.',
+          media: {
+            provider: 'skool_native',
+            sourceUrl: 'https://stream.mux.com/sample.m3u8',
+            qualities: [{ qualityLabel: '1080p', streamUrl: 'https://stream.mux.com/sample.m3u8', isHLS: true }],
+          },
+          attachments: [
+            { id: 'att_1', fileName: 'Diagrama_Arquitectura.pdf', downloadUrl: 'https://s3.amazonaws.com/diagram.pdf', fileExtension: 'pdf' },
+            { id: 'att_2', fileName: 'Plantilla_Inicio.xlsx', downloadUrl: 'https://s3.amazonaws.com/template.xlsx', fileExtension: 'xlsx' },
+          ],
+        });
+        setStatusMessage('');
       }
     } catch {
       setStatusMessage('Recarga la pestaña de Skool (F5) y presiona Reescanear.');
@@ -90,34 +162,120 @@ export default function App() {
     setIsLoading(true);
     setStatusMessage('Escaneando estructura del aula virtual...');
     try {
-      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      const tab = tabs[0];
-      if (tab?.id && tab.url?.includes('skool.com')) {
-        let response: any = null;
-        try {
-          response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_FULL_COURSE' });
-        } catch {
-          // Auto-recovery: inject content script if tab was opened before extension reload
+      if (typeof chrome !== 'undefined' && chrome.tabs?.query) {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        const tab = tabs[0];
+        if (tab?.id && tab.url?.includes('skool.com')) {
+          let response: any = null;
           try {
-            await chrome.scripting.executeScript({
-              target: { tabId: tab.id },
-              files: ['src/content/index.ts'],
-            });
-            await new Promise((r) => setTimeout(r, 120));
             response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_FULL_COURSE' });
           } catch {
-            // Ignore
+            // Auto-recovery: inject content script if tab was opened before extension reload
+            try {
+              if (chrome.scripting?.executeScript) {
+                await chrome.scripting.executeScript({
+                  target: { tabId: tab.id },
+                  files: ['src/content/index.ts'],
+                });
+                await new Promise((r) => setTimeout(r, 120));
+                response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_FULL_COURSE' });
+              }
+            } catch {
+              // Ignore
+            }
           }
-        }
 
-        if (response?.type === 'COURSE_SCANNED_SUCCESS' && response.payload) {
-          setCourseData(response.payload);
-          setStatusMessage('');
+          if (response?.type === 'COURSE_SCANNED_SUCCESS' && response.payload) {
+            setCourseData(response.payload);
+            setStatusMessage('');
+          } else {
+            setStatusMessage(response?.payload?.message || 'Abre el aula virtual (Classroom) en Skool.');
+          }
         } else {
-          setStatusMessage(response?.payload?.message || 'Abre el aula virtual (Classroom) en Skool.');
+          setStatusMessage('Abre una comunidad de Skool en la pestaña activa.');
         }
       } else {
-        setStatusMessage('Abre una comunidad de Skool en la pestaña activa.');
+        // Mock full course data when rendered in browser preview
+        setCourseData({
+          courseId: 'course_preview_1',
+          courseTitle: 'Desarrollo Avanzado de Aplicaciones Web',
+          communityName: 'Devs Hispanos',
+          scannedAt: Date.now(),
+          totalLessons: 6,
+          totalVideos: 5,
+          totalAttachments: 3,
+          modules: [
+            {
+              moduleId: 'mod_1',
+              moduleIndex: 1,
+              moduleTitle: 'Módulo 1: Fundamentos y Setup de Entorno',
+              lessons: [
+                {
+                  lessonId: 'l1',
+                  lessonIndex: 1,
+                  lessonTitle: '01. Bienvenida y Roadmap del Curso',
+                  url: 'https://www.skool.com/c/m1/l1',
+                  media: { provider: 'skool_native', sourceUrl: 'https://stream.mux.com/1.m3u8', qualities: [{ qualityLabel: '1080p', streamUrl: 'https://stream.mux.com/1.m3u8', isHLS: true }] },
+                  attachments: [{ id: 'a1', fileName: 'Roadmap_Estudio.pdf', downloadUrl: 'https://s3/roadmap.pdf', fileExtension: 'pdf' }],
+                },
+                {
+                  lessonId: 'l2',
+                  lessonIndex: 2,
+                  lessonTitle: '02. Configuración de IDE y Extensiones',
+                  url: 'https://www.skool.com/c/m1/l2',
+                  media: { provider: 'loom', sourceUrl: 'https://loom.com/share/2', qualities: [{ qualityLabel: '1080p', streamUrl: 'https://loom.com/2', isHLS: false }] },
+                  attachments: [],
+                },
+              ],
+            },
+            {
+              moduleId: 'mod_2',
+              moduleIndex: 2,
+              moduleTitle: 'Módulo 2: Arquitectura y Patrones de Diseño',
+              lessons: [
+                {
+                  lessonId: 'l3',
+                  lessonIndex: 1,
+                  lessonTitle: '01. Principios SOLID en TypeScript',
+                  url: 'https://www.skool.com/c/m2/l1',
+                  media: { provider: 'vimeo', sourceUrl: 'https://player.vimeo.com/video/3', qualities: [{ qualityLabel: '1080p', streamUrl: 'https://vimeo/3.mp4', isHLS: false }] },
+                  attachments: [{ id: 'a2', fileName: 'Ejercicios_SOLID.zip', downloadUrl: 'https://s3/solid.zip', fileExtension: 'zip' }],
+                },
+                {
+                  lessonId: 'l4',
+                  lessonIndex: 2,
+                  lessonTitle: '02. Patrón Strategy y Dependency Injection',
+                  url: 'https://www.skool.com/c/m2/l2',
+                  media: { provider: 'skool_native', sourceUrl: 'https://stream.mux.com/4.m3u8', qualities: [{ qualityLabel: '1080p', streamUrl: 'https://stream.mux.com/4.m3u8', isHLS: true }] },
+                  attachments: [],
+                },
+              ],
+            },
+            {
+              moduleId: 'mod_3',
+              moduleIndex: 3,
+              moduleTitle: 'Módulo 3: Despliegue y Distribución',
+              lessons: [
+                {
+                  lessonId: 'l5',
+                  lessonIndex: 1,
+                  lessonTitle: '01. Creación del Bundle y Manifiesto V3',
+                  url: 'https://www.skool.com/c/m3/l1',
+                  media: { provider: 'skool_native', sourceUrl: 'https://stream.mux.com/5.m3u8', qualities: [{ qualityLabel: '1080p', streamUrl: 'https://stream.mux.com/5.m3u8', isHLS: true }] },
+                  attachments: [{ id: 'a3', fileName: 'Guia_Despliegue.pdf', downloadUrl: 'https://s3/deploy.pdf', fileExtension: 'pdf' }],
+                },
+                {
+                  lessonId: 'l6',
+                  lessonIndex: 2,
+                  lessonTitle: '02. Publicación en Chrome Web Store',
+                  url: 'https://www.skool.com/c/m3/l2',
+                  attachments: [],
+                },
+              ],
+            },
+          ],
+        });
+        setStatusMessage('');
       }
     } catch {
       setStatusMessage('Error al conectar con la página. Recarga la pestaña de Skool (F5).');
@@ -130,34 +288,38 @@ export default function App() {
     fetchActiveLesson();
     fetchQueueState();
 
-    const messageListener = (message: any) => {
-      if (message && message.type === 'QUEUE_STATE_CHANGED' && message.payload) {
-        setQueueState(message.payload);
-      }
-    };
-    chrome.runtime.onMessage.addListener(messageListener);
-    return () => {
-      chrome.runtime.onMessage.removeListener(messageListener);
-    };
+    if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
+      const messageListener = (message: any) => {
+        if (message && message.type === 'QUEUE_STATE_CHANGED' && message.payload) {
+          setQueueState(message.payload);
+        }
+      };
+      chrome.runtime.onMessage.addListener(messageListener);
+      return () => {
+        chrome.runtime.onMessage.removeListener(messageListener);
+      };
+    }
   }, [fetchActiveLesson, fetchQueueState]);
 
   const handleDownloadActiveLesson = async () => {
     setIsLoading(true);
     try {
-      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      const tab = tabs[0];
       let lesson = activeLesson;
 
-      // Always do a live scan on click to ensure video and attachments are fully detected
-      if (tab?.id && tab.url?.includes('skool.com')) {
-        try {
-          const res = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_ACTIVE_LESSON' });
-          if (res?.type === 'LESSON_SCANNED_SUCCESS' && res.payload) {
-            lesson = res.payload;
-            setActiveLesson(lesson);
+      if (typeof chrome !== 'undefined' && chrome.tabs?.query) {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        const tab = tabs[0];
+
+        if (tab?.id && tab.url?.includes('skool.com')) {
+          try {
+            const res = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_ACTIVE_LESSON' });
+            if (res?.type === 'LESSON_SCANNED_SUCCESS' && res.payload) {
+              lesson = res.payload;
+              setActiveLesson(lesson);
+            }
+          } catch {
+            // Fallback to existing activeLesson
           }
-        } catch {
-          // Fallback to existing activeLesson
         }
       }
 
@@ -248,10 +410,28 @@ export default function App() {
     if (!tasks || tasks.length === 0) return;
 
     try {
-      await chrome.runtime.sendMessage({
-        type: 'QUEUE_ADD_TASKS',
-        payload: { tasks },
-      });
+      if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        await chrome.runtime.sendMessage({
+          type: 'QUEUE_ADD_TASKS',
+          payload: { tasks },
+        });
+      } else {
+        // Mock add in preview mode
+        const newTasks = { ...queueState.tasks };
+        tasks.forEach((t, i) => {
+          const id = `mock_task_${Date.now()}_${i}`;
+          newTasks[id] = {
+            ...t,
+            id,
+            status: 'queued',
+            progressPercent: 0,
+            bytesDownloaded: 0,
+            retryCount: 0,
+            createdAt: Date.now(),
+          };
+        });
+        setQueueState({ ...queueState, tasks: newTasks });
+      }
     } catch {
       // Safe fallback
     }
@@ -261,10 +441,16 @@ export default function App() {
 
   const handleRemoveTask = async (taskId: string) => {
     try {
-      await chrome.runtime.sendMessage({
-        type: 'QUEUE_REMOVE_TASK',
-        payload: { taskId },
-      });
+      if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        await chrome.runtime.sendMessage({
+          type: 'QUEUE_REMOVE_TASK',
+          payload: { taskId },
+        });
+      } else {
+        const nextTasks = { ...queueState.tasks };
+        delete nextTasks[taskId];
+        setQueueState({ ...queueState, tasks: nextTasks });
+      }
     } catch {
       // Safe fallback
     }
@@ -274,7 +460,11 @@ export default function App() {
   const togglePauseQueue = async () => {
     const action = queueState.isPaused ? 'QUEUE_RESUME' : 'QUEUE_PAUSE';
     try {
-      await chrome.runtime.sendMessage({ type: action });
+      if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        await chrome.runtime.sendMessage({ type: action });
+      } else {
+        setQueueState({ ...queueState, isPaused: !queueState.isPaused });
+      }
     } catch {
       // Safe fallback
     }
@@ -283,7 +473,17 @@ export default function App() {
 
   const clearCompleted = async () => {
     try {
-      await chrome.runtime.sendMessage({ type: 'QUEUE_CLEAR_COMPLETED' });
+      if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        await chrome.runtime.sendMessage({ type: 'QUEUE_CLEAR_COMPLETED' });
+      } else {
+        const remaining: any = {};
+        Object.values(queueState.tasks).forEach((t) => {
+          if (t.status !== 'completed' && t.status !== 'failed') {
+            remaining[t.id] = t;
+          }
+        });
+        setQueueState({ ...queueState, tasks: remaining });
+      }
     } catch {
       // Safe fallback
     }
@@ -292,7 +492,11 @@ export default function App() {
 
   const handleClearAll = async () => {
     try {
-      await chrome.runtime.sendMessage({ type: 'QUEUE_CLEAR_ALL' });
+      if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        await chrome.runtime.sendMessage({ type: 'QUEUE_CLEAR_ALL' });
+      } else {
+        setQueueState({ ...queueState, tasks: {}, activeTaskIds: [] });
+      }
     } catch {
       // Safe fallback
     }
