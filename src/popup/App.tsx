@@ -259,10 +259,10 @@ export default function App() {
     setActiveTab('queue');
   };
 
-  const handleCancelTask = async (taskId: string) => {
+  const handleRemoveTask = async (taskId: string) => {
     try {
       await chrome.runtime.sendMessage({
-        type: 'QUEUE_CANCEL_TASK',
+        type: 'QUEUE_REMOVE_TASK',
         payload: { taskId },
       });
     } catch {
@@ -284,6 +284,15 @@ export default function App() {
   const clearCompleted = async () => {
     try {
       await chrome.runtime.sendMessage({ type: 'QUEUE_CLEAR_COMPLETED' });
+    } catch {
+      // Safe fallback
+    }
+    await fetchQueueState();
+  };
+
+  const handleClearAll = async () => {
+    try {
+      await chrome.runtime.sendMessage({ type: 'QUEUE_CLEAR_ALL' });
     } catch {
       // Safe fallback
     }
@@ -675,6 +684,7 @@ export default function App() {
                 </button>
                 <button
                   onClick={clearCompleted}
+                  title="Eliminar descargas completadas o con error"
                   style={{
                     padding: '4px 8px',
                     borderRadius: '4px',
@@ -691,10 +701,29 @@ export default function App() {
                   <Trash2 size={11} />
                   Limpiar
                 </button>
+                <button
+                  onClick={handleClearAll}
+                  title="Eliminar todas las descargas de la cola"
+                  style={{
+                    padding: '4px 8px',
+                    borderRadius: '4px',
+                    backgroundColor: '#450a0a',
+                    border: '1px solid #7f1d1d',
+                    color: '#fca5a5',
+                    fontSize: '11px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    fontWeight: 600,
+                  }}
+                >
+                  Eliminar Todo
+                </button>
               </div>
             </div>
 
-            <DownloadQueueList tasks={taskList} onCancelTask={handleCancelTask} />
+            <DownloadQueueList tasks={taskList} onRemoveTask={handleRemoveTask} />
           </div>
         )}
 

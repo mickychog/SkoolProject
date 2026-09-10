@@ -32,8 +32,10 @@ export type ExtensionMessage =
   | { type: 'QUEUE_PAUSE' }
   | { type: 'QUEUE_RESUME' }
   | { type: 'QUEUE_CANCEL_TASK'; payload: { taskId: string } }
+  | { type: 'QUEUE_REMOVE_TASK'; payload: { taskId: string } }
   | { type: 'QUEUE_RETRY_FAILED' }
   | { type: 'QUEUE_CLEAR_COMPLETED' }
+  | { type: 'QUEUE_CLEAR_ALL' }
   | { type: 'QUEUE_GET_STATE' }
 
   // 4. Background SW -> Popup (State Updates)

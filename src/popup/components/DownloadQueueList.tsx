@@ -1,7 +1,7 @@
 import {
   Video,
   FileText,
-  XCircle,
+  Trash2,
   AlertCircle,
   Clock,
   Loader2,
@@ -11,10 +11,10 @@ import { DownloadTask } from '@/types/queue';
 
 interface Props {
   tasks: DownloadTask[];
-  onCancelTask: (taskId: string) => void;
+  onRemoveTask: (taskId: string) => void;
 }
 
-export default function DownloadQueueList({ tasks, onCancelTask }: Props) {
+export default function DownloadQueueList({ tasks, onRemoveTask }: Props) {
   if (tasks.length === 0) {
     return (
       <div style={{ textAlign: 'center', padding: '40px 0', color: '#64748b', fontSize: '12px' }}>
@@ -35,7 +35,7 @@ export default function DownloadQueueList({ tasks, onCancelTask }: Props) {
       case 'processing':
         return (
           <span style={{ display: 'flex', alignItems: 'center', gap: '3px', color: '#60a5fa', fontSize: '10px', fontWeight: 600, textTransform: 'uppercase' }}>
-            <Loader2 size={11} className="animate-spin" /> {task.status}
+            <Loader2 size={11} className="animate-spin" /> {task.status === 'processing' ? 'Procesando' : 'Descargando'}
           </span>
         );
       case 'failed':
@@ -54,7 +54,7 @@ export default function DownloadQueueList({ tasks, onCancelTask }: Props) {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '360px', overflowY: 'auto' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '380px', overflowY: 'auto' }}>
       {tasks.map((task) => (
         <div
           key={task.id}
@@ -84,7 +84,7 @@ export default function DownloadQueueList({ tasks, onCancelTask }: Props) {
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
                   overflow: 'hidden',
-                  maxWidth: '220px',
+                  maxWidth: '200px',
                 }}
               >
                 {task.title}
@@ -93,22 +93,24 @@ export default function DownloadQueueList({ tasks, onCancelTask }: Props) {
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               {getStatusBadge(task)}
-              {task.status !== 'completed' && (
-                <button
-                  onClick={() => onCancelTask(task.id)}
-                  title="Cancelar descarga"
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: '#64748b',
-                    cursor: 'pointer',
-                    padding: 0,
-                    display: 'flex',
-                  }}
-                >
-                  <XCircle size={13} />
-                </button>
-              )}
+              <button
+                onClick={() => onRemoveTask(task.id)}
+                title="Eliminar de la cola"
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#64748b',
+                  cursor: 'pointer',
+                  padding: '2px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  borderRadius: '4px',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = '#ef4444')}
+                onMouseLeave={(e) => (e.currentTarget.style.color = '#64748b')}
+              >
+                <Trash2 size={13} />
+              </button>
             </div>
           </div>
 

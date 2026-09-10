@@ -10,6 +10,41 @@ console.log('[Skool Downloader] Background Service Worker started.');
 
 const queueManager = new QueueManager();
 
+// Configure declarativeNetRequest dynamic rules to bypass 403 Forbidden on CDNs/S3
+if (chrome.declarativeNetRequest) {
+  chrome.declarativeNetRequest.updateDynamicRules({
+    removeRuleIds: [1001],
+    addRules: [
+      {
+        id: 1001,
+        priority: 1,
+        action: {
+          type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
+          requestHeaders: [
+            {
+              header: 'Referer',
+              operation: chrome.declarativeNetRequest.HeaderOperation.SET,
+              value: 'https://www.skool.com/',
+            },
+            {
+              header: 'Origin',
+              operation: chrome.declarativeNetRequest.HeaderOperation.SET,
+              value: 'https://www.skool.com',
+            },
+          ],
+        },
+        condition: {
+          resourceTypes: [
+            chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST,
+            chrome.declarativeNetRequest.ResourceType.MEDIA,
+            chrome.declarativeNetRequest.ResourceType.OTHER,
+          ],
+        },
+      },
+    ],
+  }).catch((err) => console.error('[DNR] Rule update error:', err));
+}
+
 // Listen for messages from Popup, Content Script, or Offscreen Document
 chrome.runtime.onMessage.addListener(
   (message: ExtensionMessage, _sender, sendResponse) => {
@@ -43,8 +78,20 @@ chrome.runtime.onMessage.addListener(
         return true;
       }
 
+      case 'QUEUE_REMOVE_TASK': {
+        queueManager.removeTask(message.payload.taskId);
+        sendResponse({ success: true });
+        return true;
+      }
+
       case 'QUEUE_CLEAR_COMPLETED': {
         queueManager.clearCompleted();
+        sendResponse({ success: true });
+        return true;
+      }
+
+      case 'QUEUE_CLEAR_ALL': {
+        queueManager.clearAll();
         sendResponse({ success: true });
         return true;
       }
@@ -55,7 +102,7 @@ chrome.runtime.onMessage.addListener(
         return true;
       }
 
-      // Handle Offscreen HLS Events
+      // Handle Offscreen Events
       case 'OFFSCREEN_HLS_PROGRESS': {
         queueManager.updateTaskProgress(message.payload.taskId, message.payload.percent);
         return false;

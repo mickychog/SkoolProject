@@ -97,13 +97,41 @@ export class QueueManager {
     }
   }
 
+  removeTask(taskId: string): void {
+    const task = this.state.tasks[taskId];
+    if (task) {
+      if (task.chromeDownloadId) {
+        chrome.downloads.cancel(task.chromeDownloadId).catch(() => {});
+      }
+      this.state.activeTaskIds = this.state.activeTaskIds.filter((id) => id !== taskId);
+      delete this.state.tasks[taskId];
+      this.saveState();
+      this.checkOffscreenCleanup();
+      this.processNext();
+    }
+  }
+
   clearCompleted(): void {
     Object.keys(this.state.tasks).forEach((id) => {
-      if (this.state.tasks[id].status === 'completed') {
+      const status = this.state.tasks[id].status;
+      if (status === 'completed' || status === 'failed') {
         delete this.state.tasks[id];
       }
     });
     this.saveState();
+  }
+
+  clearAll(): void {
+    // Cancel all active downloads in Chrome
+    Object.values(this.state.tasks).forEach((task) => {
+      if (task.chromeDownloadId) {
+        chrome.downloads.cancel(task.chromeDownloadId).catch(() => {});
+      }
+    });
+    this.state.tasks = {};
+    this.state.activeTaskIds = [];
+    this.saveState();
+    this.checkOffscreenCleanup();
   }
 
   retryFailed(): void {
@@ -259,7 +287,7 @@ export class QueueManager {
 
         task.sourceUrl = targetUrl;
 
-        // 4. Dispatch via Offscreen (Safe memory blob -> avoids SERVER_FORBIDDEN on Chrome Download API)
+        // 4. Dispatch via Offscreen
         try {
           await OffscreenManager.ensureDocument();
 
