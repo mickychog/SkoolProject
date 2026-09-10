@@ -60,6 +60,14 @@ export type ExtensionMessage =
       };
     }
   | {
+      type: 'OFFSCREEN_START_DIRECT_DOWNLOAD';
+      payload: {
+        taskId: string;
+        url: string;
+        targetFileName: string;
+      };
+    }
+  | {
       type: 'OFFSCREEN_HLS_PROGRESS';
       payload: {
         taskId: string;
