@@ -1,5 +1,6 @@
 /**
  * Course Scanner: Hierarchical parser for Skool Classroom sidebar and Next.js course trees.
+ * Extracts real module and lesson names exactly as displayed on the page.
  * Follows: docs/specs/02_ARCHITECTURE_SPEC.md
  */
 
@@ -11,13 +12,13 @@ export class CourseScanner {
    * Scans the Classroom navigation and Next.js payload for all modules, lessons, videos, and attachments
    */
   static scanHierarchy(): CourseHierarchy | null {
-    // 1. First attempt: Next.js state payload (contains full data with video URLs and attachments)
+    // 1. First attempt: Next.js state payload (contains full structured data with exact names)
     const nextHierarchy = this.extractFromNextData();
     if (nextHierarchy && nextHierarchy.modules.length > 0) {
       return nextHierarchy;
     }
 
-    // 2. Fallback attempt: DOM elements
+    // 2. Fallback attempt: Deep DOM elements
     const courseTitle = this.extractCourseTitle();
     const communityName = this.extractCommunityName();
     const modules = this.extractModulesFromDom();
@@ -48,16 +49,19 @@ export class CourseScanner {
 
   static extractCourseTitle(): string {
     const titleEl = document.querySelector<HTMLElement>(
-      '[data-testid="course-title"], header h1, [class*="CourseTitle"], h1'
+      '[data-testid="course-title"], header h1, [class*="CourseTitle"], h1, [class*="course-header"] h1, [class*="course-title"]'
     );
-    return titleEl?.textContent?.trim() || document.title.replace('· Skool', '').trim() || 'Skool Course';
+    if (titleEl?.textContent?.trim()) {
+      return titleEl.textContent.trim();
+    }
+    return document.title.replace('· Skool', '').trim() || 'Curso de Skool';
   }
 
   static extractCommunityName(): string {
     const commEl = document.querySelector<HTMLElement>(
-      '[data-testid="community-name"], nav a[href^="/"], [class*="community"]'
+      '[data-testid="community-name"], nav a[href^="/"], [class*="community-name"], [class*="CommunityName"]'
     );
-    return commEl?.textContent?.trim() || 'Skool Community';
+    return commEl?.textContent?.trim() || 'Comunidad Skool';
   }
 
   /**
@@ -79,24 +83,56 @@ export class CourseScanner {
       const course = pageProps.currentCourse || pageProps.course || pageProps.group?.course || pageProps.courseData;
       if (!course) return null;
 
-      const courseTitle = course.name || course.title || this.extractCourseTitle();
+      const courseTitle = course.name || course.title || course.metadata?.title || this.extractCourseTitle();
       const communityName = pageProps.group?.name || pageProps.community?.name || this.extractCommunityName();
 
-      const rawModules = course.modules || course.sets || course.children || course.sections || [];
+      // Find all module/set containers in the course object
+      const rawModules =
+        course.modules ||
+        course.sets ||
+        course.children ||
+        course.sections ||
+        course.groups ||
+        [];
+
       const modules: CourseModule[] = [];
       let totalLessons = 0;
       let totalVideos = 0;
       let totalAttachments = 0;
 
       rawModules.forEach((m: any, mIdx: number) => {
-        const modTitle = m.name || m.title || `Módulo ${mIdx + 1}`;
-        const rawLessons = m.lessons || m.children || m.items || [];
+        const modTitle =
+          m.name ||
+          m.title ||
+          m.header ||
+          m.metadata?.name ||
+          m.metadata?.title ||
+          m.label ||
+          `Módulo ${mIdx + 1}`;
+
+        const rawLessons =
+          m.lessons ||
+          m.children ||
+          m.items ||
+          m.nodes ||
+          m.elements ||
+          [];
+
         const lessons: CourseLesson[] = [];
 
         rawLessons.forEach((l: any, lIdx: number) => {
-          const lessonTitle = l.name || l.title || `Lección ${lIdx + 1}`;
+          const lessonTitle =
+            l.name ||
+            l.title ||
+            l.metadata?.name ||
+            l.metadata?.title ||
+            l.label ||
+            `Lección ${lIdx + 1}`;
+
           const lessonId = l.id || `lesson_${mIdx + 1}_${lIdx + 1}`;
-          const lessonUrl = l.url || (l.id ? `${window.location.origin}/classroom/${course.id || 'c'}?md=${l.id}` : window.location.href);
+          const lessonUrl =
+            l.url ||
+            (l.id ? `${window.location.origin}/classroom/${course.id || 'c'}?md=${l.id}` : window.location.href);
 
           // Extract media from lesson payload
           let mediaUrl: string | undefined;
@@ -110,7 +146,7 @@ export class CourseScanner {
               l.video.stream_url ||
               l.video.playback_url ||
               l.video.raw_url ||
-              (l.video.loom_url ? l.video.loom_url : undefined) ||
+              l.video.loom_url ||
               (l.video.vimeo_id ? `https://player.vimeo.com/video/${l.video.vimeo_id}` : undefined) ||
               (l.video.youtube_id ? `https://www.youtube.com/watch?v=${l.video.youtube_id}` : undefined) ||
               (l.video.mux_playback_id ? `https://stream.mux.com/${l.video.mux_playback_id}.m3u8` : undefined);
@@ -120,17 +156,19 @@ export class CourseScanner {
 
           // Extract attachments
           const rawAttachments = l.attachments || l.files || l.resources || [];
-          const attachments = rawAttachments.map((att: any, attIdx: number) => {
-            const fileName = att.name || att.fileName || att.title || `recurso_${attIdx + 1}.pdf`;
-            const ext = fileName.includes('.') ? fileName.split('.').pop() || 'pdf' : 'pdf';
-            return {
-              id: att.id || `att_${mIdx}_${lIdx}_${attIdx}`,
-              fileName,
-              downloadUrl: att.url || att.download_url || att.link || '',
-              fileExtension: ext,
-              fileSizeBytes: att.size || att.file_size,
-            };
-          }).filter((att: any) => Boolean(att.downloadUrl));
+          const attachments = rawAttachments
+            .map((att: any, attIdx: number) => {
+              const fileName = att.name || att.fileName || att.title || `recurso_${attIdx + 1}.pdf`;
+              const ext = fileName.includes('.') ? fileName.split('.').pop() || 'pdf' : 'pdf';
+              return {
+                id: att.id || `att_${mIdx}_${lIdx}_${attIdx}`,
+                fileName,
+                downloadUrl: att.url || att.download_url || att.link || '',
+                fileExtension: ext,
+                fileSizeBytes: att.size || att.file_size,
+              };
+            })
+            .filter((att: any) => Boolean(att.downloadUrl));
 
           const lessonObj: CourseLesson = {
             lessonId,
@@ -184,35 +222,57 @@ export class CourseScanner {
         };
       }
     } catch {
-      // Ignore Next.js parse error and fallback to DOM
+      // Fallback to DOM
     }
     return null;
   }
 
   /**
-   * Extracts modules and lessons from accordion / list DOM containers
+   * Extracts modules and lessons from accordion / list DOM containers with real text titles
    */
   static extractModulesFromDom(): CourseModule[] {
     const modules: CourseModule[] = [];
 
-    // Look for module containers or accordion sections
+    // Search for accordion/module sections
     const moduleContainers = Array.from(
       document.querySelectorAll<HTMLElement>(
-        '[data-testid="module-item"], [class*="ModuleItem"], [class*="module-container"], [class*="accordion"]'
+        '[data-testid="module-item"], [class*="ModuleItem"], [class*="module-item"], [class*="set-item"], [class*="SetItem"], [class*="module-container"], [class*="accordion"], [class*="Accordion"], [class*="Section"]'
       )
     );
 
     if (moduleContainers.length > 0) {
       moduleContainers.forEach((modEl, modIdx) => {
-        const modTitleEl = modEl.querySelector<HTMLElement>('h3, [class*="title"], [class*="header"]');
-        const moduleTitle = modTitleEl?.textContent?.trim() || `Module ${modIdx + 1}`;
+        // Extract real module title
+        const modTitleEl = modEl.querySelector<HTMLElement>(
+          'h2, h3, h4, [class*="title"], [class*="Title"], [class*="header"], [class*="Header"], button'
+        );
+        let moduleTitle = modTitleEl?.textContent?.trim() || '';
+        // Clean out extra badges/numbers
+        moduleTitle = moduleTitle.replace(/\s+/g, ' ').replace(/(\d+\s*lecciones|\d+\s*lessons)/i, '').trim();
+        if (!moduleTitle) moduleTitle = `Módulo ${modIdx + 1}`;
 
         // Find lesson links within this module
-        const lessonLinks = Array.from(modEl.querySelectorAll<HTMLAnchorElement>('a[href*="/classroom/"]'));
+        const lessonLinks = Array.from(
+          modEl.querySelectorAll<HTMLAnchorElement>('a[href*="/classroom/"], a[href*="?md="], [class*="lesson"] a')
+        );
+
         const lessons: CourseLesson[] = lessonLinks.map((a, lIdx) => {
-          const title = a.textContent?.trim() || `Lesson ${lIdx + 1}`;
+          // Get text content excluding timestamps/icons
+          let title = '';
+          const titleSpan = a.querySelector<HTMLElement>('span, p, div, [class*="title"]');
+          if (titleSpan?.textContent?.trim()) {
+            title = titleSpan.textContent.trim();
+          } else {
+            title = a.textContent?.trim() || '';
+          }
+          // Clean timestamp patterns like "10:30" or "1 hr"
+          title = title.replace(/\b\d{1,2}:\d{2}\b/g, '').replace(/\s+/g, ' ').trim();
+          if (!title) title = `Lección ${lIdx + 1}`;
+
+          const lessonId = a.href.split('?md=')[1] || a.href.split('/').pop() || `lesson_${modIdx + 1}_${lIdx + 1}`;
+
           return {
-            lessonId: a.href.split('/').pop() || `lesson_${modIdx + 1}_${lIdx + 1}`,
+            lessonId,
             lessonIndex: lIdx + 1,
             lessonTitle: title,
             url: a.href,
@@ -220,33 +280,43 @@ export class CourseScanner {
           };
         });
 
-        modules.push({
-          moduleId: `mod_${modIdx + 1}`,
-          moduleIndex: modIdx + 1,
-          moduleTitle,
-          lessons,
-        });
+        if (lessons.length > 0) {
+          modules.push({
+            moduleId: `mod_${modIdx + 1}`,
+            moduleIndex: modIdx + 1,
+            moduleTitle,
+            lessons,
+          });
+        }
       });
-    } else {
-      // Fallback: collect all lesson links in the sidebar
+    }
+
+    // Fallback: if no module containers matched, collect sidebar lesson links
+    if (modules.length === 0) {
       const allLessonLinks = Array.from(
-        document.querySelectorAll<HTMLAnchorElement>('a[href*="/classroom/"]')
+        document.querySelectorAll<HTMLAnchorElement>('a[href*="/classroom/"], a[href*="?md="]')
       );
 
       if (allLessonLinks.length > 0) {
-        const defaultLessons: CourseLesson[] = allLessonLinks.map((a, idx) => ({
-          lessonId: a.href.split('/').pop() || `lesson_${idx + 1}`,
-          lessonIndex: idx + 1,
-          lessonTitle: a.textContent?.trim() || `Lesson ${idx + 1}`,
-          url: a.href,
-          attachments: [],
-        }));
+        const lessons: CourseLesson[] = allLessonLinks.map((a, idx) => {
+          let title = a.textContent?.trim() || '';
+          title = title.replace(/\b\d{1,2}:\d{2}\b/g, '').replace(/\s+/g, ' ').trim();
+          if (!title) title = `Lección ${idx + 1}`;
+
+          return {
+            lessonId: a.href.split('?md=')[1] || a.href.split('/').pop() || `lesson_${idx + 1}`,
+            lessonIndex: idx + 1,
+            lessonTitle: title,
+            url: a.href,
+            attachments: [],
+          };
+        });
 
         modules.push({
           moduleId: 'mod_1',
           moduleIndex: 1,
-          moduleTitle: 'General Lessons',
-          lessons: defaultLessons,
+          moduleTitle: this.extractCourseTitle(),
+          lessons,
         });
       }
     }

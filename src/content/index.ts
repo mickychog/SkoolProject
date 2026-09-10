@@ -71,6 +71,24 @@ chrome.runtime.onMessage.addListener(
         }
         return true;
       }
+
+      case 'TAB_FETCH_BLOB': {
+        const { url } = message.payload;
+        fetch(url, { credentials: 'include' })
+          .then(async (res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const blob = await res.blob();
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              sendResponse({ success: true, dataUrl: reader.result });
+            };
+            reader.readAsDataURL(blob);
+          })
+          .catch((err) => {
+            sendResponse({ success: false, error: err instanceof Error ? err.message : 'Fetch failed' });
+          });
+        return true;
+      }
     }
   }
 );

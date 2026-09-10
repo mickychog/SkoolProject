@@ -55,15 +55,40 @@ chrome.runtime.onMessage.addListener(
       const { taskId, url } = message.payload;
       console.log(`[Offscreen] Processing direct file Task ${taskId} from ${url}`);
 
-      fetch(url)
+      const headers: Record<string, string> = {
+        Referer: 'https://www.skool.com/',
+        Origin: 'https://www.skool.com',
+      };
+
+      fetch(url, { headers })
         .then(async (res) => {
-          if (!res.ok) {
+          if (res.status === 403 || !res.ok) {
+            // Fallback: Query active tab with user's session cookies
+            const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+            const tab = tabs[0];
+            if (tab?.id) {
+              const tabRes = await chrome.tabs.sendMessage(tab.id, {
+                type: 'TAB_FETCH_BLOB',
+                payload: { url },
+              });
+              if (tabRes?.success && tabRes.dataUrl) {
+                const response = await fetch(tabRes.dataUrl);
+                const blob = await response.blob();
+                const blobUrl = URL.createObjectURL(blob);
+                chrome.runtime.sendMessage({
+                  type: 'OFFSCREEN_HLS_COMPLETED',
+                  payload: { taskId, blobUrl },
+                });
+                return;
+              }
+            }
             throw new Error(`Error en servidor: HTTP ${res.status} (${res.statusText})`);
           }
+
           const blob = await res.blob();
 
           // Check if server returned an XML error page instead of video/file
-          if (blob.type.includes('xml') || blob.type.includes('html') || blob.size < 1000) {
+          if (blob.type.includes('xml') || blob.type.includes('html') || blob.size < 800) {
             const sampleText = await blob.slice(0, 300).text();
             if (
               sampleText.includes('<?xml') ||
@@ -71,7 +96,7 @@ chrome.runtime.onMessage.addListener(
               sampleText.includes('AccessDenied') ||
               sampleText.includes('NoSuchKey')
             ) {
-              throw new Error('El servidor denegó el acceso (Token expirado o AccessDenied en S3).');
+              throw new Error('El servidor denegó el acceso (Token expirado o AccessDenied).');
             }
           }
 

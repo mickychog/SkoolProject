@@ -10,6 +10,7 @@ export type ExtensionMessage =
   // 1. Popup -> Content Script
   | { type: 'SCAN_ACTIVE_LESSON' }
   | { type: 'SCAN_FULL_COURSE' }
+  | { type: 'TAB_FETCH_BLOB'; payload: { url: string } }
 
   // 2. Content Script -> Popup / SW
   | { type: 'LESSON_SCANNED_SUCCESS'; payload: CourseLesson }
