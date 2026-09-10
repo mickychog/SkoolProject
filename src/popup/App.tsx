@@ -13,14 +13,17 @@ import {
   RefreshCw,
   Layers,
 } from 'lucide-react';
-import { CourseLesson } from '@/types/course';
+import { CourseLesson, CourseHierarchy } from '@/types/course';
 import { QueueState } from '@/types/queue';
+import CourseTreeView from './components/CourseTreeView';
+import DownloadQueueList from './components/DownloadQueueList';
 
 type TabType = 'lesson' | 'course' | 'queue' | 'settings';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('lesson');
   const [activeLesson, setActiveLesson] = useState<CourseLesson | null>(null);
+  const [courseData, setCourseData] = useState<CourseHierarchy | null>(null);
   const [queueState, setQueueState] = useState<QueueState>({
     tasks: {},
     activeTaskIds: [],
@@ -31,12 +34,10 @@ export default function App() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string>('');
 
-  // Request state and active tab on mount
   useEffect(() => {
     fetchActiveLesson();
     fetchQueueState();
 
-    // Listen for queue updates
     const messageListener = (message: any) => {
       if (message.type === 'QUEUE_STATE_CHANGED') {
         setQueueState(message.payload);
@@ -70,6 +71,28 @@ export default function App() {
     }
   };
 
+  const fetchFullCourse = async () => {
+    setIsLoading(true);
+    setStatusMessage('Escaneando estructura del aula virtual...');
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab?.id) {
+        chrome.tabs.sendMessage(tab.id, { type: 'SCAN_FULL_COURSE' }, (response) => {
+          if (response?.type === 'COURSE_SCANNED_SUCCESS') {
+            setCourseData(response.payload);
+            setStatusMessage('');
+          } else {
+            setStatusMessage(response?.payload?.message || 'No se pudo leer la estructura del curso.');
+          }
+          setIsLoading(false);
+        });
+      }
+    } catch {
+      setStatusMessage('Error al conectar con la pestaña activa.');
+      setIsLoading(false);
+    }
+  };
+
   const fetchQueueState = () => {
     chrome.runtime?.sendMessage?.({ type: 'QUEUE_GET_STATE' }, (response) => {
       if (response?.payload) {
@@ -83,7 +106,6 @@ export default function App() {
 
     const tasks: any[] = [];
 
-    // Add video task if available
     if (activeLesson.media) {
       tasks.push({
         courseTitle: 'Skool Course',
@@ -99,7 +121,6 @@ export default function App() {
       });
     }
 
-    // Add attachments
     activeLesson.attachments.forEach((att) => {
       tasks.push({
         courseTitle: 'Skool Course',
@@ -115,12 +136,23 @@ export default function App() {
       });
     });
 
+    handleEnqueueTasks(tasks);
+  };
+
+  const handleEnqueueTasks = (tasks: any[]) => {
+    if (tasks.length === 0) return;
     chrome.runtime.sendMessage({
       type: 'QUEUE_ADD_TASKS',
       payload: { tasks },
     });
-
     setActiveTab('queue');
+  };
+
+  const handleCancelTask = (taskId: string) => {
+    chrome.runtime.sendMessage({
+      type: 'QUEUE_CANCEL_TASK',
+      payload: { taskId },
+    });
   };
 
   const togglePauseQueue = () => {
@@ -222,7 +254,10 @@ export default function App() {
         </button>
 
         <button
-          onClick={() => setActiveTab('course')}
+          onClick={() => {
+            setActiveTab('course');
+            if (!courseData) fetchFullCourse();
+          }}
           style={{
             padding: '10px 4px',
             background: 'none',
@@ -332,7 +367,7 @@ export default function App() {
                   <div style={{ display: 'flex', gap: '12px', fontSize: '12px', color: '#94a3b8' }}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                       <Video size={13} color="#60a5fa" />
-                      {activeLesson.media ? '1 Video HD' : 'Sin video nativo'}
+                      {activeLesson.media ? '1 Video HD' : 'Sin video detectado'}
                     </span>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                       <FileText size={13} color="#34d399" />
@@ -437,44 +472,48 @@ export default function App() {
 
         {/* TAB 2: FULL COURSE TREE */}
         {activeTab === 'course' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', textAlign: 'center', padding: '20px 0' }}>
-            <FolderTree size={36} color="#60a5fa" style={{ margin: '0 auto' }} />
-            <h3 style={{ fontSize: '14px', fontWeight: 600, color: '#f8fafc' }}>
-              Escáner de Curso Completo
-            </h3>
-            <p style={{ fontSize: '12px', color: '#94a3b8', lineHeight: 1.5 }}>
-              Genera la lista completa de módulos, lecciones y archivos adjuntos del aula virtual para descarga organizada en lote.
-            </p>
-            <button
-              onClick={() => {
-                setStatusMessage('Iniciando escaneo de módulos...');
-              }}
-              style={{
-                marginTop: '10px',
-                padding: '10px 16px',
-                borderRadius: '8px',
-                backgroundColor: '#10b981',
-                border: 'none',
-                color: '#fff',
-                fontWeight: 600,
-                fontSize: '13px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-              }}
-            >
-              <RefreshCw size={15} />
-              Escanear Estructura del Curso
-            </button>
+          <div>
+            {courseData && courseData.modules.length > 0 ? (
+              <CourseTreeView course={courseData} onEnqueueTasks={handleEnqueueTasks} />
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', textAlign: 'center', padding: '20px 0' }}>
+                <FolderTree size={36} color="#60a5fa" style={{ margin: '0 auto' }} />
+                <h3 style={{ fontSize: '14px', fontWeight: 600, color: '#f8fafc' }}>
+                  Escáner de Curso Completo
+                </h3>
+                <p style={{ fontSize: '12px', color: '#94a3b8', lineHeight: 1.5 }}>
+                  {statusMessage || 'Genera el árbol jerárquico de módulos, lecciones y archivos adjuntos del aula virtual.'}
+                </p>
+                <button
+                  onClick={fetchFullCourse}
+                  disabled={isLoading}
+                  style={{
+                    marginTop: '10px',
+                    padding: '10px 16px',
+                    borderRadius: '8px',
+                    backgroundColor: '#10b981',
+                    border: 'none',
+                    color: '#fff',
+                    fontWeight: 600,
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                  }}
+                >
+                  <RefreshCw size={15} className={isLoading ? 'animate-spin' : ''} />
+                  Escanear Estructura del Curso
+                </button>
+              </div>
+            )}
           </div>
         )}
 
         {/* TAB 3: DOWNLOAD QUEUE */}
         {activeTab === 'queue' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {/* Controls Bar */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <span style={{ fontSize: '12px', color: '#94a3b8', fontWeight: 600 }}>
                 {taskList.length} Tareas Totales
@@ -519,81 +558,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Task Items List */}
-            {taskList.length > 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {taskList.map((task) => (
-                  <div
-                    key={task.id}
-                    style={{
-                      padding: '10px',
-                      backgroundColor: '#111827',
-                      border: '1px solid #1e293b',
-                      borderRadius: '8px',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '6px',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
-                        {task.assetType === 'video' ? (
-                          <Video size={14} color="#60a5fa" />
-                        ) : (
-                          <FileText size={14} color="#34d399" />
-                        )}
-                        <span style={{ fontSize: '12px', fontWeight: 500, color: '#f1f5f9', textOverflow: 'ellipsis', whiteSpace: 'nowrap', overflow: 'hidden', maxWidth: '240px' }}>
-                          {task.title}
-                        </span>
-                      </div>
-                      <span
-                        style={{
-                          fontSize: '10px',
-                          padding: '1px 6px',
-                          borderRadius: '4px',
-                          backgroundColor:
-                            task.status === 'completed'
-                              ? '#064e3b'
-                              : task.status === 'downloading'
-                              ? '#1e3a8a'
-                              : task.status === 'failed'
-                              ? '#7f1d1d'
-                              : '#1e293b',
-                          color:
-                            task.status === 'completed'
-                              ? '#34d399'
-                              : task.status === 'downloading'
-                              ? '#93c5fd'
-                              : task.status === 'failed'
-                              ? '#f87171'
-                              : '#94a3b8',
-                          fontWeight: 600,
-                          textTransform: 'uppercase',
-                        }}
-                      >
-                        {task.status}
-                      </span>
-                    </div>
-
-                    {/* Progress Bar */}
-                    <div style={{ height: '4px', backgroundColor: '#1e293b', borderRadius: '2px', overflow: 'hidden' }}>
-                      <div
-                        style={{
-                          width: `${task.progressPercent}%`,
-                          height: '100%',
-                          backgroundColor: task.status === 'completed' ? '#10b981' : '#3b82f6',
-                          transition: 'width 0.3s ease',
-                        }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div style={{ textAlign: 'center', padding: '40px 0', color: '#64748b', fontSize: '12px' }}>
-                No hay descargas activas en cola.
-              </div>
-            )}
+            <DownloadQueueList tasks={taskList} onCancelTask={handleCancelTask} />
           </div>
         )}
 
