@@ -39,7 +39,7 @@ export default function App() {
     fetchQueueState();
 
     const messageListener = (message: any) => {
-      if (message.type === 'QUEUE_STATE_CHANGED') {
+      if (message && message.type === 'QUEUE_STATE_CHANGED' && message.payload) {
         setQueueState(message.payload);
       }
     };
@@ -53,9 +53,15 @@ export default function App() {
     setIsLoading(true);
     setStatusMessage('Escaneando lección en pestaña activa...');
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tab = tabs[0];
       if (tab?.id) {
         chrome.tabs.sendMessage(tab.id, { type: 'SCAN_ACTIVE_LESSON' }, (response) => {
+          if (chrome.runtime.lastError) {
+            setStatusMessage('Abre una lección de Skool para detectarla.');
+            setIsLoading(false);
+            return;
+          }
           if (response?.type === 'LESSON_SCANNED_SUCCESS') {
             setActiveLesson(response.payload);
             setStatusMessage('');
@@ -64,6 +70,9 @@ export default function App() {
           }
           setIsLoading(false);
         });
+      } else {
+        setStatusMessage('No se detectó una pestaña activa.');
+        setIsLoading(false);
       }
     } catch {
       setStatusMessage('Extensión lista. Navega a una lección de Skool.');
@@ -75,9 +84,15 @@ export default function App() {
     setIsLoading(true);
     setStatusMessage('Escaneando estructura del aula virtual...');
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tab = tabs[0];
       if (tab?.id) {
         chrome.tabs.sendMessage(tab.id, { type: 'SCAN_FULL_COURSE' }, (response) => {
+          if (chrome.runtime.lastError) {
+            setStatusMessage('Abre el aula virtual (Classroom) en Skool para escanear.');
+            setIsLoading(false);
+            return;
+          }
           if (response?.type === 'COURSE_SCANNED_SUCCESS') {
             setCourseData(response.payload);
             setStatusMessage('');
@@ -86,6 +101,9 @@ export default function App() {
           }
           setIsLoading(false);
         });
+      } else {
+        setStatusMessage('No se detectó pestaña de Skool.');
+        setIsLoading(false);
       }
     } catch {
       setStatusMessage('Error al conectar con la pestaña activa.');
@@ -95,6 +113,9 @@ export default function App() {
 
   const fetchQueueState = () => {
     chrome.runtime?.sendMessage?.({ type: 'QUEUE_GET_STATE' }, (response) => {
+      if (chrome.runtime.lastError) {
+        return;
+      }
       if (response?.payload) {
         setQueueState(response.payload);
       }
@@ -105,22 +126,23 @@ export default function App() {
     if (!activeLesson) return;
 
     const tasks: any[] = [];
+    const videoUrl = activeLesson.media?.sourceUrl || activeLesson.url;
 
-    if (activeLesson.media) {
-      tasks.push({
-        courseTitle: 'Skool Course',
-        moduleTitle: 'Module 01',
-        moduleIndex: 1,
-        lessonTitle: activeLesson.lessonTitle,
-        lessonIndex: activeLesson.lessonIndex,
-        assetType: 'video',
-        title: `${activeLesson.lessonTitle} (Video)`,
-        sourceUrl: activeLesson.media.sourceUrl,
-        suggestedFileName: `${activeLesson.lessonTitle}.mp4`,
-        targetFolder: 'Skool/Course/01_Module/',
-      });
-    }
+    // Enqueue video task
+    tasks.push({
+      courseTitle: 'Skool Course',
+      moduleTitle: 'Module 01',
+      moduleIndex: 1,
+      lessonTitle: activeLesson.lessonTitle,
+      lessonIndex: activeLesson.lessonIndex,
+      assetType: 'video',
+      title: `${activeLesson.lessonTitle} (Video)`,
+      sourceUrl: videoUrl,
+      suggestedFileName: `${activeLesson.lessonTitle}.mp4`,
+      targetFolder: 'Skool/Course/01_Module/',
+    });
 
+    // Enqueue attachments
     activeLesson.attachments.forEach((att) => {
       tasks.push({
         courseTitle: 'Skool Course',
@@ -140,36 +162,54 @@ export default function App() {
   };
 
   const handleEnqueueTasks = (tasks: any[]) => {
-    if (tasks.length === 0) return;
-    chrome.runtime.sendMessage({
-      type: 'QUEUE_ADD_TASKS',
-      payload: { tasks },
-    });
-    setActiveTab('queue');
+    if (!tasks || tasks.length === 0) return;
+
+    chrome.runtime.sendMessage(
+      {
+        type: 'QUEUE_ADD_TASKS',
+        payload: { tasks },
+      },
+      () => {
+        if (chrome.runtime.lastError) {
+          // ignore or retry
+        }
+        fetchQueueState();
+        setActiveTab('queue');
+      }
+    );
   };
 
   const handleCancelTask = (taskId: string) => {
-    chrome.runtime.sendMessage({
-      type: 'QUEUE_CANCEL_TASK',
-      payload: { taskId },
-    });
+    chrome.runtime.sendMessage(
+      {
+        type: 'QUEUE_CANCEL_TASK',
+        payload: { taskId },
+      },
+      () => {
+        if (chrome.runtime.lastError) return;
+        fetchQueueState();
+      }
+    );
   };
 
   const togglePauseQueue = () => {
-    if (queueState.isPaused) {
-      chrome.runtime.sendMessage({ type: 'QUEUE_RESUME' });
-    } else {
-      chrome.runtime.sendMessage({ type: 'QUEUE_PAUSE' });
-    }
+    const action = queueState.isPaused ? 'QUEUE_RESUME' : 'QUEUE_PAUSE';
+    chrome.runtime.sendMessage({ type: action }, () => {
+      if (chrome.runtime.lastError) return;
+      fetchQueueState();
+    });
   };
 
   const clearCompleted = () => {
-    chrome.runtime.sendMessage({ type: 'QUEUE_CLEAR_COMPLETED' });
+    chrome.runtime.sendMessage({ type: 'QUEUE_CLEAR_COMPLETED' }, () => {
+      if (chrome.runtime.lastError) return;
+      fetchQueueState();
+    });
   };
 
-  const taskList = Object.values(queueState.tasks);
-  const activeCount = queueState.activeTaskIds.length;
-  const totalInQueue = taskList.filter((t) => t.status === 'queued' || t.status === 'downloading').length;
+  const taskList = Object.values(queueState.tasks || {});
+  const activeCount = queueState.activeTaskIds?.length || 0;
+  const totalInQueue = taskList.filter((t) => t.status === 'queued' || t.status === 'downloading' || t.status === 'processing').length;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '560px', backgroundColor: '#090d16' }}>
@@ -278,7 +318,10 @@ export default function App() {
         </button>
 
         <button
-          onClick={() => setActiveTab('queue')}
+          onClick={() => {
+            fetchQueueState();
+            setActiveTab('queue');
+          }}
           style={{
             padding: '10px 4px',
             background: 'none',
@@ -367,7 +410,7 @@ export default function App() {
                   <div style={{ display: 'flex', gap: '12px', fontSize: '12px', color: '#94a3b8' }}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                       <Video size={13} color="#60a5fa" />
-                      {activeLesson.media ? '1 Video HD' : 'Sin video detectado'}
+                      {activeLesson.media ? '1 Video HD' : '1 Video / Lección'}
                     </span>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                       <FileText size={13} color="#34d399" />

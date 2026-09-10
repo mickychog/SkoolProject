@@ -67,7 +67,7 @@ export default function CourseTreeView({ course, onEnqueueTasks }: Props) {
       mod.lessons.forEach((lesson: CourseLesson) => {
         if (selectedLessonIds.has(lesson.lessonId)) {
           // Add Video task if permitted by filter
-          if (lesson.media && filterMode !== 'attachments_only') {
+          if (filterMode !== 'attachments_only') {
             const targetPath = buildDownloadPath({
               communityName: course.communityName,
               courseTitle: course.courseTitle,
@@ -89,7 +89,7 @@ export default function CourseTreeView({ course, onEnqueueTasks }: Props) {
               lessonIndex: lesson.lessonIndex,
               assetType: 'video',
               title: `${lesson.lessonTitle} (Video)`,
-              sourceUrl: lesson.media.sourceUrl,
+              sourceUrl: lesson.media?.sourceUrl || lesson.url,
               suggestedFileName,
               targetFolder,
             });

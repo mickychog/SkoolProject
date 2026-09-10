@@ -6,6 +6,7 @@
 import { QueueState, DownloadTask } from '@/types/queue';
 import { ExtensionMessage } from '@/types/messages';
 import { OffscreenManager } from './offscreen-manager';
+import { providerRegistry } from '@/providers';
 
 export class QueueManager {
   private state: QueueState = {
@@ -219,7 +220,31 @@ export class QueueManager {
     for (const task of tasksToStart) {
       this.state.activeTaskIds.push(task.id);
 
-      // Check if it is an HLS stream
+      // 1. If task is a Skool lesson page URL, resolve stream first
+      if (task.assetType === 'video' && task.sourceUrl.includes('/classroom/')) {
+        task.status = 'processing';
+        this.saveState();
+
+        try {
+          const resolvedStream = await this.resolveLessonPageStream(task.sourceUrl);
+          if (resolvedStream) {
+            task.sourceUrl = resolvedStream;
+          } else {
+            // Lesson has text only or no video found
+            task.status = 'completed';
+            task.progressPercent = 100;
+            task.completedAt = Date.now();
+            this.state.activeTaskIds = this.state.activeTaskIds.filter((id) => id !== task.id);
+            this.saveState();
+            this.processNext();
+            continue;
+          }
+        } catch {
+          // If fetch fails, proceed with original URL
+        }
+      }
+
+      // 2. Check if it is an HLS stream
       if (task.sourceUrl.includes('.m3u8')) {
         task.status = 'processing';
         this.saveState();
@@ -263,6 +288,36 @@ export class QueueManager {
         }
       }
     }
+  }
+
+  private async resolveLessonPageStream(lessonUrl: string): Promise<string | null> {
+    try {
+      const res = await fetch(lessonUrl);
+      if (!res.ok) return null;
+      const html = await res.text();
+
+      // Look for HLS .m3u8, Loom, Vimeo, or YouTube URLs in page source or Next data
+      const m3u8Match = html.match(/https?:\/\/[^"'\\s>]+\.m3u8[^"'\\s>]*/i);
+      if (m3u8Match) return m3u8Match[0].replace(/\\u0026/g, '&');
+
+      const loomMatch = html.match(/https?:\/\/(?:www\.)?loom\.com\/(?:share|embed)\/[a-zA-Z0-9_-]+/i);
+      if (loomMatch) {
+        const resolved = await providerRegistry.resolveMedia(loomMatch[0]);
+        if (resolved.qualities[0]?.streamUrl) return resolved.qualities[0].streamUrl;
+      }
+
+      const vimeoMatch = html.match(/https?:\/\/(?:player\.)?vimeo\.com\/(?:video\/)?[0-9]+/i);
+      if (vimeoMatch) {
+        const resolved = await providerRegistry.resolveMedia(vimeoMatch[0]);
+        if (resolved.qualities[0]?.streamUrl) return resolved.qualities[0].streamUrl;
+      }
+
+      const mp4Match = html.match(/https?:\/\/[^"'\\s>]+\.mp4[^"'\\s>]*/i);
+      if (mp4Match) return mp4Match[0].replace(/\\u0026/g, '&');
+    } catch {
+      // Fallback
+    }
+    return null;
   }
 
   private async checkOffscreenCleanup(): Promise<void> {
