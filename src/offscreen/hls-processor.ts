@@ -76,6 +76,27 @@ export class HlsProcessor {
   }
 
   /**
+   * Helper to fetch text with fallback
+   */
+  static async fetchText(url: string): Promise<string> {
+    const res = await fetch(url).catch(() => null);
+    if (res && res.ok) {
+      return res.text();
+    }
+    if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+      const tabRes: any = await chrome.runtime.sendMessage({
+        type: 'RELAY_TAB_FETCH_BLOB',
+        payload: { url },
+      }).catch(() => null);
+      if (tabRes?.success && tabRes.dataUrl) {
+        const response = await fetch(tabRes.dataUrl);
+        return response.text();
+      }
+    }
+    throw new Error(`Failed to fetch media playlist: HTTP ${res?.status || 'Error'}`);
+  }
+
+  /**
    * Downloads all segments sequentially with retry logic and reports progress
    */
   static async downloadAndAssemble(
@@ -83,11 +104,7 @@ export class HlsProcessor {
     onProgress?: (percent: number, current: number, total: number) => void
   ): Promise<Blob> {
     // 1. Fetch playlist
-    const res = await fetch(manifestUrl);
-    if (!res.ok) {
-      throw new Error(`Failed to fetch media playlist: HTTP ${res.status}`);
-    }
-    let manifestText = await res.text();
+    let manifestText = await this.fetchText(manifestUrl);
     let targetPlaylistUrl = manifestUrl;
 
     // If it's a master playlist, fetch the highest quality variant
@@ -95,9 +112,10 @@ export class HlsProcessor {
       const bestVariantUrl = this.parseBestQualityFromMaster(manifestText, manifestUrl);
       if (bestVariantUrl) {
         targetPlaylistUrl = bestVariantUrl;
-        const variantRes = await fetch(bestVariantUrl);
-        if (variantRes.ok) {
-          manifestText = await variantRes.text();
+        try {
+          manifestText = await this.fetchText(bestVariantUrl);
+        } catch {
+          // Keep master text if variant fails
         }
       }
     }
@@ -124,10 +142,22 @@ export class HlsProcessor {
           chunk = await segRes.arrayBuffer();
         } catch {
           if (attempts >= 3) {
+            // Last attempt via tab relay
+            if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+              const tabRes: any = await chrome.runtime.sendMessage({
+                type: 'RELAY_TAB_FETCH_BLOB',
+                payload: { url: seg.url },
+              }).catch(() => null);
+              if (tabRes?.success && tabRes.dataUrl) {
+                const response = await fetch(tabRes.dataUrl);
+                chunk = await response.arrayBuffer();
+                break;
+              }
+            }
             throw new Error(`Failed to download segment ${i + 1}/${segments.length} after 3 attempts.`);
           }
           // Exponential backoff
-          await new Promise((r) => setTimeout(r, 500 * attempts));
+          await new Promise((r) => setTimeout(r, 400 * attempts));
         }
       }
 

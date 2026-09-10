@@ -11,7 +11,8 @@
     "notifications",
     "webRequest",
     "declarativeNetRequest",
-    "scripting"
+    "scripting",
+    "cookies"
   ],
   "host_permissions": [
     "https://*/*",

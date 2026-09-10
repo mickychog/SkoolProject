@@ -55,52 +55,60 @@ chrome.runtime.onMessage.addListener(
       const { taskId, url } = message.payload;
       console.log(`[Offscreen] Processing direct file Task ${taskId} from ${url}`);
 
-      const headers: Record<string, string> = {
-        Referer: 'https://www.skool.com/',
-        Origin: 'https://www.skool.com',
-      };
+      const fetchDirect = async () => {
+        let res = await fetch(url).catch(() => null);
 
-      fetch(url, { headers })
-        .then(async (res) => {
-          if (res.status === 403 || !res.ok) {
-            // Fallback: Request Background SW to fetch through active Skool tab with session cookies
-            try {
-              const tabRes: any = await chrome.runtime.sendMessage({
-                type: 'RELAY_TAB_FETCH_BLOB',
-                payload: { url },
-              });
-              if (tabRes?.success && tabRes.dataUrl) {
-                const response = await fetch(tabRes.dataUrl);
-                const blob = await response.blob();
-                const blobUrl = URL.createObjectURL(blob);
-                chrome.runtime.sendMessage({
-                  type: 'OFFSCREEN_HLS_COMPLETED',
-                  payload: { taskId, blobUrl },
-                });
-                return;
-              }
-            } catch {
-              // Ignore relay error and throw standard error
+        // If 403 or network failure, try relay fetch through authenticated Skool tab
+        if (!res || !res.ok || res.status === 403) {
+          try {
+            const tabRes: any = await chrome.runtime.sendMessage({
+              type: 'RELAY_TAB_FETCH_BLOB',
+              payload: { url },
+            });
+            if (tabRes?.success && tabRes.dataUrl) {
+              const response = await fetch(tabRes.dataUrl);
+              const blob = await response.blob();
+              return URL.createObjectURL(blob);
             }
+          } catch {
+            // Ignore
+          }
+          if (res) {
             throw new Error(`Error en servidor: HTTP ${res.status} (${res.statusText})`);
           }
+          throw new Error('No se pudo descargar el archivo.');
+        }
 
-          const blob = await res.blob();
+        let blob = await res.blob();
 
-          // Check if server returned an XML error page instead of video/file
-          if (blob.type.includes('xml') || blob.type.includes('html') || blob.size < 800) {
-            const sampleText = await blob.slice(0, 300).text();
-            if (
-              sampleText.includes('<?xml') ||
-              sampleText.includes('<Error>') ||
-              sampleText.includes('AccessDenied') ||
-              sampleText.includes('NoSuchKey')
-            ) {
+        // Check if server returned an XML error page instead of video/file
+        if (blob.type.includes('xml') || (blob.type.includes('html') && blob.size < 5000)) {
+          const sampleText = await blob.slice(0, 300).text();
+          if (
+            sampleText.includes('<?xml') ||
+            sampleText.includes('<Error>') ||
+            sampleText.includes('AccessDenied') ||
+            sampleText.includes('NoSuchKey')
+          ) {
+            // Retry via relay tab
+            const tabRes: any = await chrome.runtime.sendMessage({
+              type: 'RELAY_TAB_FETCH_BLOB',
+              payload: { url },
+            });
+            if (tabRes?.success && tabRes.dataUrl) {
+              const response = await fetch(tabRes.dataUrl);
+              blob = await response.blob();
+            } else {
               throw new Error('El servidor denegó el acceso (Token expirado o AccessDenied).');
             }
           }
+        }
 
-          const blobUrl = URL.createObjectURL(blob);
+        return URL.createObjectURL(blob);
+      };
+
+      fetchDirect()
+        .then((blobUrl) => {
           chrome.runtime.sendMessage({
             type: 'OFFSCREEN_HLS_COMPLETED',
             payload: {

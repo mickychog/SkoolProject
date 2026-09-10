@@ -10,7 +10,7 @@ console.log('[Skool Downloader] Background Service Worker started.');
 
 const queueManager = new QueueManager();
 
-// Configure declarativeNetRequest dynamic rules to bypass 403 Forbidden on CDNs/S3
+// Configure declarativeNetRequest dynamic rules for skool.com media
 if (chrome.declarativeNetRequest) {
   chrome.declarativeNetRequest.updateDynamicRules({
     removeRuleIds: [1001],
@@ -26,14 +26,10 @@ if (chrome.declarativeNetRequest) {
               operation: chrome.declarativeNetRequest.HeaderOperation.SET,
               value: 'https://www.skool.com/',
             },
-            {
-              header: 'Origin',
-              operation: chrome.declarativeNetRequest.HeaderOperation.SET,
-              value: 'https://www.skool.com',
-            },
           ],
         },
         condition: {
+          urlFilter: '||skool.com',
           resourceTypes: [
             chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST,
             chrome.declarativeNetRequest.ResourceType.MEDIA,
@@ -52,21 +48,46 @@ chrome.runtime.onMessage.addListener(
       case 'RELAY_TAB_FETCH_BLOB': {
         (async () => {
           try {
+            const { url } = message.payload;
             const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
             let tab = tabs[0];
             if (!tab?.url?.includes('skool.com')) {
               const skoolTabs = await chrome.tabs.query({ url: '*://*.skool.com/*' });
               if (skoolTabs.length > 0) tab = skoolTabs[0];
             }
+
+            // Attempt 1: Fetch via content script in active Skool tab
             if (tab?.id) {
-              const res = await chrome.tabs.sendMessage(tab.id, {
-                type: 'TAB_FETCH_BLOB',
-                payload: message.payload,
-              });
-              sendResponse(res);
-            } else {
-              sendResponse({ success: false, error: 'No active Skool tab found' });
+              try {
+                const res: any = await chrome.tabs.sendMessage(tab.id, {
+                  type: 'TAB_FETCH_BLOB',
+                  payload: { url },
+                });
+                if (res?.success && res.dataUrl) {
+                  sendResponse(res);
+                  return;
+                }
+              } catch {
+                // Content script unavailable, try background fetch
+              }
             }
+
+            // Attempt 2: Background privileged fetch
+            const fetchRes = await fetch(url, { credentials: 'include' });
+            if (fetchRes.ok) {
+              const buffer = await fetchRes.arrayBuffer();
+              const bytes = new Uint8Array(buffer);
+              let binary = '';
+              for (let i = 0; i < bytes.byteLength; i++) {
+                binary += String.fromCharCode(bytes[i]);
+              }
+              const base64 = btoa(binary);
+              const mimeType = fetchRes.headers.get('content-type') || 'application/octet-stream';
+              sendResponse({ success: true, dataUrl: `data:${mimeType};base64,${base64}` });
+              return;
+            }
+
+            sendResponse({ success: false, error: `Error en servidor: HTTP ${fetchRes.status}` });
           } catch (err: unknown) {
             sendResponse({ success: false, error: err instanceof Error ? err.message : 'Relay failed' });
           }
