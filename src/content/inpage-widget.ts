@@ -51,6 +51,13 @@ export class InPageWidget {
     };
 
     container.onclick = async () => {
+      // Check if extension context is still active
+      if (typeof chrome === 'undefined' || !chrome.runtime?.id) {
+        container.innerHTML = `<span style="color:#fbbf24;">🔄 Recarga la página (F5)</span>`;
+        setTimeout(() => InPageWidget.resetButton(container), 3500);
+        return;
+      }
+
       container.innerHTML = `<span>⏳ Escaneando...</span>`;
       try {
         const lesson = await LessonScanner.scan();
@@ -133,10 +140,19 @@ export class InPageWidget {
         container.innerHTML = `<span style="color:#34d399;">✓ ¡${tasks.length} en cola!</span>`;
         setTimeout(() => InPageWidget.resetButton(container), 3000);
       } catch (err: unknown) {
-        console.error('[Skool Downloader] InPageWidget error:', err);
-        const isContextInvalid = err instanceof Error && err.message.includes('Extension context invalidated');
-        container.innerHTML = `<span style="color:#f87171;">${isContextInvalid ? '🔄 Abre desde el icono' : '❌ Error al encolar'}</span>`;
-        setTimeout(() => InPageWidget.resetButton(container), 3000);
+        const isContextInvalid =
+          (err instanceof Error &&
+            (err.message.includes('Extension context invalidated') ||
+              err.message.includes('context invalidated'))) ||
+          !chrome.runtime?.id;
+
+        if (isContextInvalid) {
+          container.innerHTML = `<span style="color:#fbbf24;">🔄 Recarga la página (F5)</span>`;
+        } else {
+          console.warn('[Skool Downloader] InPageWidget error:', err);
+          container.innerHTML = `<span style="color:#f87171;">❌ Error al encolar</span>`;
+        }
+        setTimeout(() => InPageWidget.resetButton(container), 3500);
       }
     };
 

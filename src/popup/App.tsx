@@ -117,32 +117,60 @@ export default function App() {
                     const script = document.getElementById('__NEXT_DATA__');
                     if (script && script.textContent) {
                       try { nextData = JSON.parse(script.textContent); } catch {}
+                    } else if ((window as any).__NEXT_DATA__) {
+                      nextData = (window as any).__NEXT_DATA__;
                     }
                     const pp = nextData?.props?.pageProps;
-                    const course = pp?.currentCourse || pp?.course || pp?.group?.course || pp?.courseData;
-                    const courseTitle = course?.name || course?.title || document.title.replace('· Skool', '').trim() || 'Curso';
+
+                    const findCourseObject = (root: any, depth = 0): any => {
+                      if (!root || typeof root !== 'object' || depth > 8) return null;
+                      if (root.sets && Array.isArray(root.sets) && root.sets.length > 0) return root;
+                      if (root.modules && Array.isArray(root.modules) && root.modules.length > 0 && (root.name || root.title)) return root;
+                      if (root.currentCourse) { const c = findCourseObject(root.currentCourse, depth + 1); if (c) return c; }
+                      if (root.course) { const c = findCourseObject(root.course, depth + 1); if (c) return c; }
+                      if (root.courseData) { const c = findCourseObject(root.courseData, depth + 1); if (c) return c; }
+                      if (root.group?.course) { const c = findCourseObject(root.group.course, depth + 1); if (c) return c; }
+                      if (root.dehydratedState?.queries && Array.isArray(root.dehydratedState.queries)) {
+                        for (const q of root.dehydratedState.queries) {
+                          const found = findCourseObject(q?.state?.data, depth + 1);
+                          if (found) return found;
+                        }
+                      }
+                      for (const key of Object.keys(root)) {
+                        if (key === 'course' || key === 'currentCourse' || key === 'classroom' || key === 'group' || key === 'data' || key === 'state') {
+                          const found = findCourseObject(root[key], depth + 1);
+                          if (found) return found;
+                        }
+                      }
+                      return null;
+                    };
+
+                    const course = (pp ? findCourseObject(pp) : null) || pp?.currentCourse || pp?.course || pp?.group?.course || pp?.courseData;
+                    const courseTitle = course?.name || course?.title || course?.metadata?.name || pp?.group?.name || document.title.replace('· Skool', '').trim() || 'Curso';
                     const communityName = pp?.group?.name || pp?.community?.name || 'Skool';
 
                     const currentUrl = window.location.href;
-                    const urlObj = new URL(currentUrl);
-                    const mdParam = urlObj.searchParams.get('md');
-                    const lessonId = mdParam || urlObj.pathname.split('/').filter(Boolean).pop() || 'lesson_active';
+                    let mdParam = '';
+                    try {
+                      const urlObj = new URL(currentUrl);
+                      mdParam = urlObj.searchParams.get('md') || urlObj.pathname.split('/').filter(Boolean).pop() || '';
+                    } catch {}
 
                     let rawLesson = pp?.currentLesson || pp?.lesson || pp?.activeLesson;
                     let parentModTitle = 'Módulo 01';
                     let parentModIdx = 1;
                     let lessonIdx = 1;
 
-                    const sets = course?.sets || course?.modules || course?.children || pp?.sets || pp?.modules || [];
-                    for (let sIdx = 0; sIdx < sets.length; sIdx++) {
-                      const set = sets[sIdx];
-                      const lessons = set.modules || set.lessons || set.children || set.items || [];
+                    const rawModules = course?.sets || course?.modules || course?.children || course?.sections || pp?.sets || pp?.modules || [];
+                    for (let mIdx = 0; mIdx < rawModules.length; mIdx++) {
+                      const mod = rawModules[mIdx];
+                      const lessons = mod.modules || mod.lessons || mod.children || mod.items || mod.nodes || [];
                       for (let lIdx = 0; lIdx < lessons.length; lIdx++) {
                         const l = lessons[lIdx];
-                        if (l.id === lessonId || currentUrl.includes(l.id)) {
+                        if (l.id === mdParam || (mdParam && currentUrl.includes(l.id)) || currentUrl.includes(l.id)) {
                           rawLesson = l;
-                          parentModTitle = set.name || set.title || set.label || `Módulo ${sIdx + 1}`;
-                          parentModIdx = sIdx + 1;
+                          parentModTitle = mod.name || mod.title || mod.label || mod.metadata?.name || `Módulo ${mIdx + 1}`;
+                          parentModIdx = mIdx + 1;
                           lessonIdx = lIdx + 1;
                           break;
                         }
@@ -150,8 +178,8 @@ export default function App() {
                       if (rawLesson && parentModTitle !== 'Módulo 01') break;
                     }
 
-                    const heading = document.querySelector('[data-testid="lesson-title"], [class*="LessonTitle"], h1, h2');
-                    const lessonTitle = rawLesson?.name || rawLesson?.title || heading?.textContent?.trim() || document.title.replace('· Skool', '').trim() || 'Lección';
+                    const headingEl = document.querySelector('[data-testid="lesson-title"], [class*="LessonTitle"], [class*="lesson-title"], [class*="styled__Title"], h1, h2');
+                    const lessonTitle = rawLesson?.name || rawLesson?.title || rawLesson?.label || headingEl?.textContent?.trim() || document.title.replace('· Skool', '').trim() || 'Lección';
 
                     let mediaUrl: string | undefined;
                     if (typeof rawLesson?.video === 'string') mediaUrl = rawLesson.video;
@@ -177,7 +205,7 @@ export default function App() {
                     })).filter((a: any) => Boolean(a.downloadUrl));
 
                     return {
-                      lessonId,
+                      lessonId: mdParam || `lesson_${Date.now()}`,
                       lessonIndex: lessonIdx,
                       lessonTitle,
                       moduleTitle: parentModTitle,
@@ -260,25 +288,88 @@ export default function App() {
                     const script = document.getElementById('__NEXT_DATA__');
                     if (script && script.textContent) {
                       try { nextData = JSON.parse(script.textContent); } catch {}
+                    } else if ((window as any).__NEXT_DATA__) {
+                      nextData = (window as any).__NEXT_DATA__;
                     }
                     const pp = nextData?.props?.pageProps;
-                    const course = pp?.currentCourse || pp?.course || pp?.group?.course || pp?.courseData;
-                    const courseTitle = course?.name || course?.title || document.title.replace('· Skool', '').trim() || 'Curso';
-                    const communityName = pp?.group?.name || pp?.community?.name || 'Skool';
 
-                    const rawSets = course?.sets || course?.modules || course?.sections || pp?.sets || pp?.modules || [];
+                    const findCourseObject = (root: any, depth = 0): any => {
+                      if (!root || typeof root !== 'object' || depth > 8) return null;
+                      if (root.sets && Array.isArray(root.sets) && root.sets.length > 0) return root;
+                      if (root.modules && Array.isArray(root.modules) && root.modules.length > 0 && (root.name || root.title)) return root;
+                      if (root.currentCourse) { const c = findCourseObject(root.currentCourse, depth + 1); if (c) return c; }
+                      if (root.course) { const c = findCourseObject(root.course, depth + 1); if (c) return c; }
+                      if (root.courseData) { const c = findCourseObject(root.courseData, depth + 1); if (c) return c; }
+                      if (root.group?.course) { const c = findCourseObject(root.group.course, depth + 1); if (c) return c; }
+                      if (root.dehydratedState?.queries && Array.isArray(root.dehydratedState.queries)) {
+                        for (const q of root.dehydratedState.queries) {
+                          const found = findCourseObject(q?.state?.data, depth + 1);
+                          if (found) return found;
+                        }
+                      }
+                      for (const key of Object.keys(root)) {
+                        if (key === 'course' || key === 'currentCourse' || key === 'classroom' || key === 'group' || key === 'data' || key === 'state') {
+                          const found = findCourseObject(root[key], depth + 1);
+                          if (found) return found;
+                        }
+                      }
+                      return null;
+                    };
+
+                    const course = (pp ? findCourseObject(pp) : null) || pp?.currentCourse || pp?.course || pp?.group?.course || pp?.courseData;
+
+                    const extractCourseTitle = (): string => {
+                      const titleEl = document.querySelector('[data-testid="course-title"], header h1, [class*="CourseTitle"], h1, [class*="course-header"] h1, [class*="course-title"]');
+                      return course?.name || course?.title || course?.metadata?.name || titleEl?.textContent?.trim() || document.title.replace('· Skool', '').trim() || 'Curso';
+                    };
+
+                    const extractCommunityName = (): string => {
+                      const commEl = document.querySelector('[data-testid="community-name"], nav a[href^="/"], [class*="community-name"], [class*="CommunityName"]');
+                      return pp?.group?.name || pp?.community?.name || commEl?.textContent?.trim() || 'Skool';
+                    };
+
+                    const courseTitle = extractCourseTitle();
+                    const communityName = extractCommunityName();
+
                     const modules: any[] = [];
                     let totalLessons = 0;
                     let totalVideos = 0;
                     let totalAttachments = 0;
 
+                    const rawSets =
+                      course?.sets ||
+                      course?.modules ||
+                      course?.sections ||
+                      course?.children ||
+                      course?.groups ||
+                      pp?.sets ||
+                      pp?.modules ||
+                      [];
+
                     rawSets.forEach((set: any, sIdx: number) => {
-                      const modTitle = set.name || set.title || set.label || set.metadata?.name || `Módulo ${sIdx + 1}`;
-                      const rawLessons = set.modules || set.lessons || set.children || set.items || [];
+                      const modTitle =
+                        set.name ||
+                        set.title ||
+                        set.label ||
+                        set.heading ||
+                        set.metadata?.name ||
+                        set.metadata?.title ||
+                        set.metadata?.label ||
+                        `Módulo ${sIdx + 1}`;
+
+                      const rawLessons = set.modules || set.lessons || set.children || set.items || set.nodes || [];
                       const lessons: any[] = [];
 
                       rawLessons.forEach((l: any, lIdx: number) => {
-                        const lessonTitle = l.name || l.title || l.label || `Lección ${lIdx + 1}`;
+                        const lessonTitle =
+                          l.name ||
+                          l.title ||
+                          l.label ||
+                          l.heading ||
+                          l.metadata?.name ||
+                          l.metadata?.title ||
+                          `Lección ${lIdx + 1}`;
+
                         const lessonId = l.id || `l_${sIdx + 1}_${lIdx + 1}`;
                         const lessonUrl = l.url || `${window.location.origin}/classroom/${course?.id || 'c'}?md=${l.id || ''}`;
 
@@ -317,40 +408,80 @@ export default function App() {
                         lessons.push(lessonObj);
                       });
 
-                      modules.push({
-                        moduleId: set.id || `mod_${sIdx + 1}`,
-                        moduleIndex: sIdx + 1,
-                        moduleTitle: modTitle,
-                        lessons,
-                      });
+                      if (lessons.length > 0) {
+                        modules.push({
+                          moduleId: set.id || `mod_${sIdx + 1}`,
+                          moduleIndex: sIdx + 1,
+                          moduleTitle: modTitle,
+                          lessons,
+                        });
+                      }
                     });
 
-                    // DOM Fallback if nextData was empty
+                    // DOM Fallback if Next.js data was empty or had no modules
                     if (modules.length === 0) {
-                      const setContainers = Array.from(document.querySelectorAll('[class*="styled__Set"], [class*="SetContainer"], [class*="SetItem"], [class*="Section"]'));
-                      setContainers.forEach((setEl, sIdx) => {
-                        const h = setEl.querySelector('[class*="SetTitle"], [class*="Header"], h2, h3, h4, button');
-                        let modTitle = h?.textContent?.trim() || `Módulo ${sIdx + 1}`;
-                        modTitle = modTitle.replace(/(\d+\s*lecciones|\d+\s*lessons|\(\s*\d+\s*\))/i, '').trim();
+                      const setContainers = Array.from(
+                        document.querySelectorAll('[data-testid="module-item"], [data-testid*="module"], [data-testid*="set"], [class*="styled__Set"], [class*="SetContainer"], [class*="SetItem"], [class*="set-item"], [class*="ModuleItem"], [class*="module-item"], [class*="module-container"], [class*="Accordion"], [class*="Section"]')
+                      );
 
-                        const links = Array.from(setEl.querySelectorAll('a[href*="/classroom/"], a[href*="?md="]'));
-                        const lessons = links.map((a: any, lIdx: number) => ({
-                          lessonId: a.href.split('?md=')[1] || `l_${sIdx + 1}_${lIdx + 1}`,
-                          lessonIndex: lIdx + 1,
-                          lessonTitle: a.textContent?.replace(/\b\d{1,2}:\d{2}\b/g, '').trim() || `Lección ${lIdx + 1}`,
-                          url: a.href,
-                          moduleTitle: modTitle,
-                          moduleIndex: sIdx + 1,
-                          courseTitle,
-                          communityName,
-                          attachments: [],
-                        }));
+                      if (setContainers.length > 0) {
+                        setContainers.forEach((setEl, sIdx) => {
+                          const h = setEl.querySelector('[class*="SetTitle"], [class*="setTitle"], [class*="Header"], [class*="header"], [class*="title"], [class*="Title"], h2, h3, h4, h5, button');
+                          let modTitle = h?.textContent?.trim() || `Módulo ${sIdx + 1}`;
+                          modTitle = modTitle.replace(/\s+/g, ' ').replace(/\(\s*\d+\s*\)/g, '').replace(/(\d+\s*lecciones|\d+\s*lessons)/i, '').trim();
+                          if (!modTitle) modTitle = `Módulo ${sIdx + 1}`;
 
-                        if (lessons.length > 0) {
-                          modules.push({ moduleId: `mod_${sIdx + 1}`, moduleIndex: sIdx + 1, moduleTitle: modTitle, lessons });
-                          totalLessons += lessons.length;
+                          const links = Array.from(setEl.querySelectorAll('a[href*="/classroom/"], a[href*="?md="]'));
+                          const lessons = links.map((a: any, lIdx: number) => {
+                            const titleSpan = a.querySelector('span, p, div, [class*="title"]');
+                            let title = titleSpan?.textContent?.trim() || a.textContent?.trim() || `Lección ${lIdx + 1}`;
+                            title = title.replace(/\b\d{1,2}:\d{2}\b/g, '').replace(/\s+/g, ' ').trim();
+                            if (!title) title = `Lección ${lIdx + 1}`;
+
+                            const lessonId = a.href.split('?md=')[1] || a.href.split('/').pop() || `l_${sIdx + 1}_${lIdx + 1}`;
+                            return {
+                              lessonId,
+                              lessonIndex: lIdx + 1,
+                              lessonTitle: title,
+                              url: a.href,
+                              moduleTitle: modTitle,
+                              moduleIndex: sIdx + 1,
+                              courseTitle,
+                              communityName,
+                              attachments: [],
+                            };
+                          });
+
+                          if (lessons.length > 0) {
+                            modules.push({ moduleId: `mod_${sIdx + 1}`, moduleIndex: sIdx + 1, moduleTitle: modTitle, lessons });
+                            totalLessons += lessons.length;
+                          }
+                        });
+                      }
+
+                      // Fallback 2: grab all classroom links anywhere on page
+                      if (modules.length === 0) {
+                        const allLinks = Array.from(document.querySelectorAll('a[href*="/classroom/"], a[href*="?md="]'));
+                        if (allLinks.length > 0) {
+                          const lessons = allLinks.map((a: any, idx: number) => {
+                            let title = a.textContent?.trim() || `Lección ${idx + 1}`;
+                            title = title.replace(/\b\d{1,2}:\d{2}\b/g, '').replace(/\s+/g, ' ').trim();
+                            return {
+                              lessonId: a.href.split('?md=')[1] || a.href.split('/').pop() || `l_${idx + 1}`,
+                              lessonIndex: idx + 1,
+                              lessonTitle: title,
+                              url: a.href,
+                              moduleTitle: courseTitle,
+                              moduleIndex: 1,
+                              courseTitle,
+                              communityName,
+                              attachments: [],
+                            };
+                          });
+                          modules.push({ moduleId: 'mod_1', moduleIndex: 1, moduleTitle: courseTitle, lessons });
+                          totalLessons = lessons.length;
                         }
-                      });
+                      }
                     }
 
                     return {
@@ -374,9 +505,11 @@ export default function App() {
             }
           }
 
-          if (response?.type === 'COURSE_SCANNED_SUCCESS' && response.payload) {
+          if (response?.type === 'COURSE_SCANNED_SUCCESS' && response.payload && response.payload.modules?.length > 0) {
             setCourseData(response.payload);
             setStatusMessage('');
+          } else if (response?.payload?.modules?.length === 0) {
+            setStatusMessage('No se encontraron lecciones en la vista actual. Navega a un curso de Skool.');
           } else {
             setStatusMessage(response?.payload?.message || 'Abre el aula virtual (Classroom) en Skool.');
           }
@@ -802,7 +935,10 @@ export default function App() {
         }}
       >
         <button
-          onClick={() => setActiveTab('lesson')}
+          onClick={() => {
+            setActiveTab('lesson');
+            if (!activeLesson) fetchActiveLesson();
+          }}
           style={{
             padding: '10px 4px',
             background: 'none',
@@ -825,7 +961,7 @@ export default function App() {
         <button
           onClick={() => {
             setActiveTab('course');
-            if (!courseData) fetchFullCourse();
+            if (!courseData || courseData.modules.length === 0) fetchFullCourse();
           }}
           style={{
             padding: '10px 4px',

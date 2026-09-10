@@ -184,3 +184,22 @@ if (chrome.tabs?.onUpdated) {
   });
 }
 
+// On install or extension reload, attempt to re-inject into active Skool tabs
+if (chrome.runtime?.onInstalled) {
+  chrome.runtime.onInstalled.addListener(async () => {
+    try {
+      if (chrome.scripting?.executeScript) {
+        const tabs = await chrome.tabs.query({ url: '*://*.skool.com/*' });
+        for (const tab of tabs) {
+          if (tab.id) {
+            chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              files: ['src/content/index.ts'],
+            }).catch(() => {});
+          }
+        }
+      }
+    } catch {}
+  });
+}
+
