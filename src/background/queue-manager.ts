@@ -287,11 +287,11 @@ export class QueueManager {
 
         task.sourceUrl = targetUrl;
 
-        // 4. Dispatch via Offscreen
-        try {
-          await OffscreenManager.ensureDocument();
-
-          if (targetUrl.includes('.m3u8')) {
+        // 4. Dispatch download
+        if (targetUrl.includes('.m3u8')) {
+          // HLS Stream processing via Offscreen
+          try {
+            await OffscreenManager.ensureDocument();
             chrome.runtime.sendMessage({
               type: 'OFFSCREEN_START_HLS_DOWNLOAD',
               payload: {
@@ -300,24 +300,48 @@ export class QueueManager {
                 targetFileName: task.suggestedFileName,
               },
             });
-          } else {
-            chrome.runtime.sendMessage({
-              type: 'OFFSCREEN_START_DIRECT_DOWNLOAD',
-              payload: {
-                taskId: task.id,
-                url: targetUrl,
-                targetFileName: task.suggestedFileName,
-              },
-            });
+          } catch (err: unknown) {
+            task.status = 'failed';
+            task.error = err instanceof Error ? err.message : 'Error al procesar stream HLS';
+            this.state.activeTaskIds = this.state.activeTaskIds.filter((id) => id !== task.id);
+            this.saveState();
+            this.processNext();
           }
-        } catch (err: unknown) {
-          task.status = 'failed';
-          task.error = err instanceof Error ? err.message : 'Error al procesar descarga';
-          this.state.activeTaskIds = this.state.activeTaskIds.filter((id) => id !== task.id);
-          this.saveState();
+        } else {
+          // Direct file download (MP4, S3 presigned, CloudFront, attachments) via native chrome.downloads
+          try {
+            const downloadId = await chrome.downloads.download({
+              url: targetUrl,
+              filename: `${task.targetFolder}${task.suggestedFileName}`,
+              conflictAction: 'uniquify',
+              saveAs: false,
+            });
+            task.chromeDownloadId = downloadId;
+            task.status = 'downloading';
+            this.saveState();
+          } catch (err: unknown) {
+            // Fallback via Offscreen if direct download throws
+            try {
+              await OffscreenManager.ensureDocument();
+              chrome.runtime.sendMessage({
+                type: 'OFFSCREEN_START_DIRECT_DOWNLOAD',
+                payload: {
+                  taskId: task.id,
+                  url: targetUrl,
+                  targetFileName: task.suggestedFileName,
+                },
+              });
+            } catch (offErr: unknown) {
+              task.status = 'failed';
+              task.error = err instanceof Error ? err.message : 'Error al iniciar descarga';
+              this.state.activeTaskIds = this.state.activeTaskIds.filter((id) => id !== task.id);
+              this.saveState();
+              this.processNext();
+            }
+          }
         }
       } else {
-        // Attachment download via Offscreen blob
+        // Attachment download
         if (task.sourceUrl.includes('skool.com') && task.sourceUrl.includes('/classroom/')) {
           task.status = 'failed';
           task.error = 'URL de archivo adjunto no válida';
@@ -331,20 +355,33 @@ export class QueueManager {
         this.saveState();
 
         try {
-          await OffscreenManager.ensureDocument();
-          chrome.runtime.sendMessage({
-            type: 'OFFSCREEN_START_DIRECT_DOWNLOAD',
-            payload: {
-              taskId: task.id,
-              url: task.sourceUrl,
-              targetFileName: task.suggestedFileName,
-            },
+          const downloadId = await chrome.downloads.download({
+            url: task.sourceUrl,
+            filename: `${task.targetFolder}${task.suggestedFileName}`,
+            conflictAction: 'uniquify',
+            saveAs: false,
           });
-        } catch (err: unknown) {
-          task.status = 'failed';
-          task.error = err instanceof Error ? err.message : 'Error al descargar archivo';
-          this.state.activeTaskIds = this.state.activeTaskIds.filter((id) => id !== task.id);
+          task.chromeDownloadId = downloadId;
+          task.status = 'downloading';
           this.saveState();
+        } catch (err: unknown) {
+          try {
+            await OffscreenManager.ensureDocument();
+            chrome.runtime.sendMessage({
+              type: 'OFFSCREEN_START_DIRECT_DOWNLOAD',
+              payload: {
+                taskId: task.id,
+                url: task.sourceUrl,
+                targetFileName: task.suggestedFileName,
+              },
+            });
+          } catch (offErr: unknown) {
+            task.status = 'failed';
+            task.error = err instanceof Error ? err.message : 'Error al descargar archivo';
+            this.state.activeTaskIds = this.state.activeTaskIds.filter((id) => id !== task.id);
+            this.saveState();
+            this.processNext();
+          }
         }
       }
     }

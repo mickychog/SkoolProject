@@ -10,10 +10,10 @@ console.log('[Skool Downloader] Background Service Worker started.');
 
 const queueManager = new QueueManager();
 
-// Configure declarativeNetRequest dynamic rules for skool.com media
+// Configure declarativeNetRequest dynamic rules for media and streaming requests
 if (chrome.declarativeNetRequest) {
   chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds: [1001],
+    removeRuleIds: [1001, 1002],
     addRules: [
       {
         id: 1001,
@@ -30,6 +30,28 @@ if (chrome.declarativeNetRequest) {
         },
         condition: {
           urlFilter: '||skool.com',
+          resourceTypes: [
+            chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST,
+            chrome.declarativeNetRequest.ResourceType.MEDIA,
+            chrome.declarativeNetRequest.ResourceType.OTHER,
+          ],
+        },
+      },
+      {
+        id: 1002,
+        priority: 1,
+        action: {
+          type: chrome.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
+          requestHeaders: [
+            {
+              header: 'Referer',
+              operation: chrome.declarativeNetRequest.HeaderOperation.SET,
+              value: 'https://www.skool.com/',
+            },
+          ],
+        },
+        condition: {
+          urlFilter: '*mux.com/*',
           resourceTypes: [
             chrome.declarativeNetRequest.ResourceType.XMLHTTPREQUEST,
             chrome.declarativeNetRequest.ResourceType.MEDIA,
