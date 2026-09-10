@@ -250,7 +250,7 @@ export class QueueManager {
             } else {
               // Mark cleanly as failed or completed text-only lesson (NEVER call chrome.downloads on a webpage)
               task.status = 'failed';
-              task.error = 'No se encontró stream de video reproducible en esta lección.';
+              task.error = 'No se encontró video reproducible en esta lección.';
               this.state.activeTaskIds = this.state.activeTaskIds.filter((id) => id !== task.id);
               this.saveState();
               this.processNext();
@@ -328,6 +328,35 @@ export class QueueManager {
       const res = await fetch(lessonUrl);
       if (!res.ok) return null;
       const html = await res.text();
+
+      // Check Next.js data script
+      const nextMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/i);
+      if (nextMatch && nextMatch[1]) {
+        try {
+          const nextJson = JSON.parse(nextMatch[1]);
+          const currentLesson = nextJson.props?.pageProps?.currentLesson || nextJson.props?.pageProps?.lesson;
+          if (currentLesson?.video) {
+            const v = currentLesson.video;
+            if (typeof v === 'string') return v;
+            if (v.hls_url) return v.hls_url;
+            if (v.m3u8) return v.m3u8;
+            if (v.url) return v.url;
+            if (v.stream_url) return v.stream_url;
+            if (v.playback_url) return v.playback_url;
+            if (v.raw_url) return v.raw_url;
+            if (v.loom_url) {
+              const resLoom = await providerRegistry.resolveMedia(v.loom_url);
+              if (resLoom.qualities[0]?.streamUrl) return resLoom.qualities[0].streamUrl;
+            }
+            if (v.vimeo_id) {
+              const resVimeo = await providerRegistry.resolveMedia(`https://player.vimeo.com/video/${v.vimeo_id}`);
+              if (resVimeo.qualities[0]?.streamUrl) return resVimeo.qualities[0].streamUrl;
+            }
+          }
+        } catch {
+          // Fallback to regex
+        }
+      }
 
       // Look for HLS .m3u8, Loom, Vimeo, or YouTube URLs in page source or Next data
       const m3u8Match = html.match(/https?:\/\/[^"'\\s>]+\.m3u8[^"'\\s>]*/i);

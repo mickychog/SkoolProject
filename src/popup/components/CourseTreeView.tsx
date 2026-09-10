@@ -81,18 +81,21 @@ export default function CourseTreeView({ course, onEnqueueTasks }: Props) {
             const suggestedFileName = pathParts.pop()!;
             const targetFolder = pathParts.join('/') + '/';
 
-            tasks.push({
-              courseTitle: course.courseTitle,
-              moduleTitle: mod.moduleTitle,
-              moduleIndex: mod.moduleIndex,
-              lessonTitle: lesson.lessonTitle,
-              lessonIndex: lesson.lessonIndex,
-              assetType: 'video',
-              title: `${lesson.lessonTitle} (Video)`,
-              sourceUrl: lesson.media?.sourceUrl || lesson.url,
-              suggestedFileName,
-              targetFolder,
-            });
+            const videoUrl = lesson.media?.sourceUrl || lesson.url;
+            if (videoUrl) {
+              tasks.push({
+                courseTitle: course.courseTitle,
+                moduleTitle: mod.moduleTitle,
+                moduleIndex: mod.moduleIndex,
+                lessonTitle: lesson.lessonTitle,
+                lessonIndex: lesson.lessonIndex,
+                assetType: 'video',
+                title: `${lesson.lessonTitle} (Video)`,
+                sourceUrl: videoUrl,
+                suggestedFileName,
+                targetFolder,
+              });
+            }
           }
 
           // Add Attachment tasks if permitted by filter

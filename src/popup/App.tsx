@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { CourseLesson, CourseHierarchy } from '@/types/course';
 import { QueueState } from '@/types/queue';
+import { buildDownloadPath } from '@/utils/filename';
 import CourseTreeView from './components/CourseTreeView';
 import DownloadQueueList from './components/DownloadQueueList';
 
@@ -41,7 +42,7 @@ export default function App() {
         setQueueState(response.payload);
       }
     } catch {
-      // Background worker might be starting, safe to ignore
+      // Safe fallback
     }
   }, []);
 
@@ -53,7 +54,7 @@ export default function App() {
       const tab = tabs[0];
       if (tab?.id && tab.url?.includes('skool.com')) {
         const response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_ACTIVE_LESSON' });
-        if (response?.type === 'LESSON_SCANNED_SUCCESS') {
+        if (response?.type === 'LESSON_SCANNED_SUCCESS' && response.payload) {
           setActiveLesson(response.payload);
           setStatusMessage('');
         } else {
@@ -77,7 +78,7 @@ export default function App() {
       const tab = tabs[0];
       if (tab?.id && tab.url?.includes('skool.com')) {
         const response = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_FULL_COURSE' });
-        if (response?.type === 'COURSE_SCANNED_SUCCESS') {
+        if (response?.type === 'COURSE_SCANNED_SUCCESS' && response.payload) {
           setCourseData(response.payload);
           setStatusMessage('');
         } else {
@@ -109,40 +110,106 @@ export default function App() {
   }, [fetchActiveLesson, fetchQueueState]);
 
   const handleDownloadActiveLesson = async () => {
-    if (!activeLesson) return;
+    setIsLoading(true);
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tab = tabs[0];
+      let lesson = activeLesson;
 
-    const tasks: any[] = [];
-    if (activeLesson.media) {
-      tasks.push({
-        courseTitle: 'Skool Course',
-        moduleTitle: 'Module 01',
-        moduleIndex: 1,
-        lessonTitle: activeLesson.lessonTitle,
-        lessonIndex: activeLesson.lessonIndex,
-        assetType: 'video',
-        title: `${activeLesson.lessonTitle} (Video)`,
-        sourceUrl: activeLesson.media.sourceUrl,
-        suggestedFileName: `${activeLesson.lessonTitle}.mp4`,
-        targetFolder: 'Skool/Course/01_Module/',
+      // Always do a live scan on click to ensure video and attachments are fully detected
+      if (tab?.id && tab.url?.includes('skool.com')) {
+        try {
+          const res = await chrome.tabs.sendMessage(tab.id, { type: 'SCAN_ACTIVE_LESSON' });
+          if (res?.type === 'LESSON_SCANNED_SUCCESS' && res.payload) {
+            lesson = res.payload;
+            setActiveLesson(lesson);
+          }
+        } catch {
+          // Fallback to existing activeLesson
+        }
+      }
+
+      if (!lesson) {
+        setStatusMessage('Abre una lección de Skool para descargarla.');
+        setIsLoading(false);
+        return;
+      }
+
+      const tasks: any[] = [];
+      const mediaSource = lesson.media?.sourceUrl;
+      const communityName = 'Skool';
+      const courseTitle = document.title.replace('· Skool', '').trim() || 'Curso';
+
+      if (mediaSource) {
+        const targetPath = buildDownloadPath({
+          communityName,
+          courseTitle,
+          moduleIndex: 1,
+          moduleTitle: 'Module 01',
+          lessonIndex: lesson.lessonIndex,
+          lessonTitle: lesson.lessonTitle,
+          extension: '.mp4',
+        });
+        const pathParts = targetPath.split('/');
+        const suggestedFileName = pathParts.pop()!;
+        const targetFolder = pathParts.join('/') + '/';
+
+        tasks.push({
+          courseTitle,
+          moduleTitle: 'Module 01',
+          moduleIndex: 1,
+          lessonTitle: lesson.lessonTitle,
+          lessonIndex: lesson.lessonIndex,
+          assetType: 'video',
+          title: `${lesson.lessonTitle} (Video)`,
+          sourceUrl: mediaSource,
+          suggestedFileName,
+          targetFolder,
+        });
+      }
+
+      // Add attachments
+      lesson.attachments.forEach((att) => {
+        const targetPath = buildDownloadPath({
+          communityName,
+          courseTitle,
+          moduleIndex: 1,
+          moduleTitle: 'Module 01',
+          lessonIndex: lesson.lessonIndex,
+          lessonTitle: lesson.lessonTitle,
+          assetTitle: att.fileName.replace(/\.[^/.]+$/, ''),
+          extension: att.fileExtension,
+        });
+        const pathParts = targetPath.split('/');
+        const suggestedFileName = pathParts.pop()!;
+        const targetFolder = pathParts.join('/') + '/';
+
+        tasks.push({
+          courseTitle,
+          moduleTitle: 'Module 01',
+          moduleIndex: 1,
+          lessonTitle: lesson.lessonTitle,
+          lessonIndex: lesson.lessonIndex,
+          assetType: 'attachment',
+          title: att.fileName,
+          sourceUrl: att.downloadUrl,
+          suggestedFileName,
+          targetFolder,
+        });
       });
+
+      if (tasks.length === 0) {
+        setStatusMessage('Esta lección no contiene video ni archivos descargables.');
+        setIsLoading(false);
+        return;
+      }
+
+      await handleEnqueueTasks(tasks);
+    } catch {
+      setStatusMessage('Error al encolar la lección.');
+    } finally {
+      setIsLoading(false);
     }
-
-    activeLesson.attachments.forEach((att) => {
-      tasks.push({
-        courseTitle: 'Skool Course',
-        moduleTitle: 'Module 01',
-        moduleIndex: 1,
-        lessonTitle: activeLesson.lessonTitle,
-        lessonIndex: activeLesson.lessonIndex,
-        assetType: 'attachment',
-        title: att.fileName,
-        sourceUrl: att.downloadUrl,
-        suggestedFileName: att.fileName,
-        targetFolder: 'Skool/Course/01_Module/',
-      });
-    });
-
-    await handleEnqueueTasks(tasks);
   };
 
   const handleEnqueueTasks = async (tasks: any[]) => {
@@ -154,7 +221,7 @@ export default function App() {
         payload: { tasks },
       });
     } catch {
-      // Ignore
+      // Safe fallback
     }
     await fetchQueueState();
     setActiveTab('queue');
@@ -167,7 +234,7 @@ export default function App() {
         payload: { taskId },
       });
     } catch {
-      // Ignore
+      // Safe fallback
     }
     await fetchQueueState();
   };
@@ -177,7 +244,7 @@ export default function App() {
     try {
       await chrome.runtime.sendMessage({ type: action });
     } catch {
-      // Ignore
+      // Safe fallback
     }
     await fetchQueueState();
   };
@@ -186,7 +253,7 @@ export default function App() {
     try {
       await chrome.runtime.sendMessage({ type: 'QUEUE_CLEAR_COMPLETED' });
     } catch {
-      // Ignore
+      // Safe fallback
     }
     await fetchQueueState();
   };
@@ -394,7 +461,7 @@ export default function App() {
                   <div style={{ display: 'flex', gap: '12px', fontSize: '12px', color: '#94a3b8' }}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                       <Video size={13} color="#60a5fa" />
-                      {activeLesson.media ? '1 Video HD' : 'Sin video detectado'}
+                      {activeLesson.media ? '1 Video HD' : 'Texto / Sin Video'}
                     </span>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                       <FileText size={13} color="#34d399" />
@@ -436,6 +503,7 @@ export default function App() {
 
                 <button
                   onClick={handleDownloadActiveLesson}
+                  disabled={isLoading}
                   style={{
                     marginTop: '8px',
                     padding: '12px',
