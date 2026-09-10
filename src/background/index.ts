@@ -49,6 +49,31 @@ if (chrome.declarativeNetRequest) {
 chrome.runtime.onMessage.addListener(
   (message: ExtensionMessage, _sender, sendResponse) => {
     switch (message.type) {
+      case 'RELAY_TAB_FETCH_BLOB': {
+        (async () => {
+          try {
+            const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+            let tab = tabs[0];
+            if (!tab?.url?.includes('skool.com')) {
+              const skoolTabs = await chrome.tabs.query({ url: '*://*.skool.com/*' });
+              if (skoolTabs.length > 0) tab = skoolTabs[0];
+            }
+            if (tab?.id) {
+              const res = await chrome.tabs.sendMessage(tab.id, {
+                type: 'TAB_FETCH_BLOB',
+                payload: message.payload,
+              });
+              sendResponse(res);
+            } else {
+              sendResponse({ success: false, error: 'No active Skool tab found' });
+            }
+          } catch (err: unknown) {
+            sendResponse({ success: false, error: err instanceof Error ? err.message : 'Relay failed' });
+          }
+        })();
+        return true;
+      }
+
       case 'QUEUE_GET_STATE': {
         sendResponse({ type: 'QUEUE_STATE_CHANGED', payload: queueManager.getState() });
         return true;

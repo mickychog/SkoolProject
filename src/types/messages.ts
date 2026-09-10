@@ -11,6 +11,8 @@ export type ExtensionMessage =
   | { type: 'SCAN_ACTIVE_LESSON' }
   | { type: 'SCAN_FULL_COURSE' }
   | { type: 'TAB_FETCH_BLOB'; payload: { url: string } }
+  | { type: 'RELAY_TAB_FETCH_BLOB'; payload: { url: string } }
+  | { type: 'TAB_URL_CHANGED'; payload: { url: string } }
 
   // 2. Content Script -> Popup / SW
   | { type: 'LESSON_SCANNED_SUCCESS'; payload: CourseLesson }

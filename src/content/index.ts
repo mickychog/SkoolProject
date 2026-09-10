@@ -17,13 +17,42 @@ if (document.readyState === 'loading') {
   InPageWidget.mount();
 }
 
-// Observe URL changes in SPA
+// Observe URL changes in SPA and notify extension popup/background
 let lastUrl = window.location.href;
-const observer = new MutationObserver(() => {
+const handleUrlChange = () => {
   if (window.location.href !== lastUrl) {
     lastUrl = window.location.href;
     InPageWidget.mount();
+    try {
+      chrome.runtime.sendMessage({
+        type: 'TAB_URL_CHANGED',
+        payload: { url: window.location.href },
+      }).catch(() => {});
+    } catch {
+      // Ignore context invalidated errors
+    }
   }
+};
+
+window.addEventListener('popstate', handleUrlChange);
+
+// Hook into history API for instant SPA detection
+const originalPushState = history.pushState;
+history.pushState = function (...args) {
+  const ret = originalPushState.apply(this, args);
+  handleUrlChange();
+  return ret;
+};
+
+const originalReplaceState = history.replaceState;
+history.replaceState = function (...args) {
+  const ret = originalReplaceState.apply(this, args);
+  handleUrlChange();
+  return ret;
+};
+
+const observer = new MutationObserver(() => {
+  handleUrlChange();
 });
 observer.observe(document, { subtree: true, childList: true });
 

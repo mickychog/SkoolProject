@@ -61,3 +61,17 @@ body {
   box-shadow: 0 0 25px rgba(59, 130, 246, 0.45);
   transform: translateY(-1px);
 }
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+

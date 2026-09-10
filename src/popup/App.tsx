@@ -292,6 +292,9 @@ export default function App() {
       const messageListener = (message: any) => {
         if (message && message.type === 'QUEUE_STATE_CHANGED' && message.payload) {
           setQueueState(message.payload);
+        } else if (message && message.type === 'TAB_URL_CHANGED') {
+          // Auto-rescan when user navigates to a new lesson in Skool SPA
+          fetchActiveLesson();
         }
       };
       chrome.runtime.onMessage.addListener(messageListener);
@@ -300,6 +303,20 @@ export default function App() {
       };
     }
   }, [fetchActiveLesson, fetchQueueState]);
+
+  const handleRefresh = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      if (activeTab === 'course') {
+        await fetchFullCourse();
+      } else {
+        await fetchActiveLesson();
+      }
+      await fetchQueueState();
+    } finally {
+      setIsLoading(false);
+    }
+  }, [activeTab, fetchFullCourse, fetchActiveLesson, fetchQueueState]);
 
   const handleDownloadActiveLesson = async () => {
     setIsLoading(true);
@@ -543,20 +560,45 @@ export default function App() {
           </div>
         </div>
 
-        {totalInQueue > 0 && (
-          <div
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <button
+            onClick={handleRefresh}
+            disabled={isLoading}
+            title="Actualizar y re-escanear datos de Skool"
             style={{
+              padding: '5px 9px',
+              borderRadius: '6px',
+              border: '1px solid #334155',
+              background: '#1e293b',
+              color: '#cbd5e1',
               fontSize: '11px',
-              padding: '2px 8px',
-              borderRadius: '999px',
-              backgroundColor: '#1e3a8a',
-              color: '#93c5fd',
               fontWeight: 600,
+              cursor: isLoading ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
+              transition: 'all 0.2s',
             }}
           >
-            {activeCount} activo / {totalInQueue} en cola
-          </div>
-        )}
+            <RefreshCw size={12} className={isLoading ? 'spin' : ''} />
+            <span>Refrescar</span>
+          </button>
+
+          {totalInQueue > 0 && (
+            <div
+              style={{
+                fontSize: '11px',
+                padding: '2px 8px',
+                borderRadius: '999px',
+                backgroundColor: '#1e3a8a',
+                color: '#93c5fd',
+                fontWeight: 600,
+              }}
+            >
+              {activeCount} activo / {totalInQueue} en cola
+            </div>
+          )}
+        </div>
       </header>
 
       {/* Navigation Tabs */}
@@ -694,7 +736,7 @@ export default function App() {
                     padding: '14px',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                     <span
                       style={{
                         fontSize: '10px',
@@ -708,6 +750,24 @@ export default function App() {
                     >
                       Lección Detectada
                     </span>
+                    <button
+                      onClick={fetchActiveLesson}
+                      disabled={isLoading}
+                      title="Re-escanear lección actual"
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#94a3b8',
+                        cursor: isLoading ? 'not-allowed' : 'pointer',
+                        fontSize: '11px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                      }}
+                    >
+                      <RefreshCw size={11} className={isLoading ? 'spin' : ''} />
+                      Re-escanear
+                    </button>
                   </div>
                   <h2 style={{ fontSize: '14px', fontWeight: 600, color: '#f1f5f9', marginBottom: '8px' }}>
                     {activeLesson.lessonTitle}

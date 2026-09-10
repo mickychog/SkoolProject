@@ -63,12 +63,10 @@ chrome.runtime.onMessage.addListener(
       fetch(url, { headers })
         .then(async (res) => {
           if (res.status === 403 || !res.ok) {
-            // Fallback: Query active tab with user's session cookies
-            const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-            const tab = tabs[0];
-            if (tab?.id) {
-              const tabRes = await chrome.tabs.sendMessage(tab.id, {
-                type: 'TAB_FETCH_BLOB',
+            // Fallback: Request Background SW to fetch through active Skool tab with session cookies
+            try {
+              const tabRes: any = await chrome.runtime.sendMessage({
+                type: 'RELAY_TAB_FETCH_BLOB',
                 payload: { url },
               });
               if (tabRes?.success && tabRes.dataUrl) {
@@ -81,6 +79,8 @@ chrome.runtime.onMessage.addListener(
                 });
                 return;
               }
+            } catch {
+              // Ignore relay error and throw standard error
             }
             throw new Error(`Error en servidor: HTTP ${res.status} (${res.statusText})`);
           }
