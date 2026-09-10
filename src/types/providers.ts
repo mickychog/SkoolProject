@@ -4,6 +4,7 @@
  */
 
 import { MediaProviderType, VideoQualityOption } from './course';
+export type { MediaProviderType, VideoQualityOption };
 
 export interface ResolveOptions {
   headers?: Record<string, string>;
